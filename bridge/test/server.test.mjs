@@ -55,8 +55,15 @@ test('HTTPS bridge authenticates, isolates admin, and completes a phone question
   ws.on('message', data => events.push(JSON.parse(data)));
   await once(ws, 'open');
   while (!events.some(x => x.type === 'ready')) await new Promise(resolve => setTimeout(resolve, 10));
+  const missingImage = new Promise(resolve => ws.on('message', data => {
+    const event = JSON.parse(data); if (event.type === 'error') resolve(event);
+  }));
+  ws.send(JSON.stringify({ type: 'ask', text: 'What is this?', requiresImage: true }));
+  assert.equal((await missingImage).code, 'camera_unavailable');
+  assert.equal(events.some(event => event.type === 'answer' || event.type === 'thinking'), false);
   const answer = new Promise(resolve => ws.on('message', data => { const e = JSON.parse(data); if (e.type === 'answer') resolve(e); }));
-  ws.send(JSON.stringify({ type: 'ask', text: 'What is this?' }));
+  ws.send(JSON.stringify({ type: 'frame', jpeg: Buffer.from([255, 216, 0, 255, 217]).toString('base64') }));
+  ws.send(JSON.stringify({ type: 'ask', text: 'What is this?', requiresImage: true }));
   assert.deepEqual(await answer, { type: 'answer', text: 'A blue mug.' });
   const closed = once(ws, 'close');
   assert.equal((await fetch(`${admin}/api/revoke`, { method: 'POST', headers: { 'X-RayBridge': 'local' } })).status, 200);

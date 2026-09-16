@@ -39,14 +39,14 @@ struct ContentView: View {
                         .accessibilityHint(model.sessionActive ? "Stops the camera, microphone, speech, and Mac connection." : "Connects to your Mac and glasses camera, then starts listening for your question.")
                     if let error = model.error { Text(error).foregroundStyle(.red).accessibilityLabel("Error: \(error)") }
                     Text(model.cameraStatus).accessibilityLabel("Camera status: \(model.cameraStatus)")
-                    Text("Tap Start RayBridge, wait for the camera confirmation, then ask your question. Stop RayBridge ends the entire session.").font(.body)
+                    Text("Tap Start RayBridge, wait for “Ready. Ask your question,” then speak. Stop RayBridge ends the entire session.").font(.body)
                     GroupBox("Conversation") {
                         VStack(alignment: .leading, spacing: 12) {
                             if !model.transcript.isEmpty { Text("You: \(model.transcript)") }
                             if !model.answer.isEmpty { Text(model.answer).textSelection(.enabled) }
                             TextField("Type a question", text: $model.typedQuestion, axis: .vertical)
                             Button("Ask") { model.ask(model.typedQuestion); model.typedQuestion = "" }
-                                .disabled(!model.running || model.busy || model.typedQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                .disabled(!model.running || model.busy || model.speakingStatus || model.typedQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             Button("New conversation") { model.reset() }.disabled(model.sessionPhase == .stopping)
                                 .accessibilityHint("Stops RayBridge and clears this conversation. Tap Start RayBridge to begin a new one.")
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(6)

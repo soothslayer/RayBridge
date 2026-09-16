@@ -27,7 +27,14 @@ struct SessionControllerTests {
             try await testCancellation(at: stage)
             try await testFailure(at: stage)
         }
-        print("Passed 9 session lifecycle tests: startup order, full stop, cancellation and failure at every stage.")
+        try await testTransientStartupRecovery()
+        try await testRetryExhaustion()
+        try await testStopDuringRetryDelay()
+        try await testStableConnectionResetsBudget()
+        try await testRecoveryWaitsForSpeech(cancel: false)
+        try await testRecoveryWaitsForSpeech(cancel: true)
+        testCameraFreshness()
+        print("Passed 16 lifecycle/freshness tests, including recovery, exhaustion, cancellation and stable-connection retry reset.")
     }
 
     @MainActor
@@ -112,5 +119,125 @@ struct SessionControllerTests {
         session.start()
         try await eventually { errors == 1 }
         precondition(session.phase == .idle && steps == Array(0...failedStage))
+    }
+
+    @MainActor
+    static func testTransientStartupRecovery() async throws {
+        var attempts = 0, cleanups = 0, notifications = 0
+        let session = SessionController(
+            connect: {
+                attempts += 1
+                if attempts == 1 { throw RecoverableSessionError(message: "Mac unavailable") }
+            }, authorize: {}, startCamera: {}, startAudio: {},
+            stopImmediately: {}, stopCamera: { cleanups += 1 }, retryDelays: [.zero]
+        )
+        session.onRecovery = { _, attempt, maximum in
+            precondition(attempt == 1 && maximum == 1 && cleanups == 1)
+            notifications += 1
+        }
+        session.start()
+        try await eventually { session.phase == .running }
+        precondition(attempts == 2 && notifications == 1)
+        session.stop()
+        try await eventually { session.phase == .idle }
+        precondition(cleanups == 2)
+    }
+
+    @MainActor
+    static func testRetryExhaustion() async throws {
+        var starts = 0, errors = 0, retries = 0
+        let session = SessionController(
+            connect: { starts += 1 }, authorize: {}, startCamera: {}, startAudio: {},
+            stopImmediately: {}, stopCamera: {}, retryDelays: [.zero, .zero, .zero]
+        )
+        session.onRecovery = { _, _, _ in retries += 1 }
+        session.onError = { _ in errors += 1 }
+        session.start()
+        for expectedStart in 1...4 {
+            try await eventually { session.phase == .running && starts == expectedStart }
+            session.recover("Camera disconnected")
+            session.recover("Duplicate disconnect")
+        }
+        try await eventually { session.phase == .idle }
+        precondition(starts == 4 && retries == 3 && errors == 1, "A flapping link must stop after its retry budget")
+    }
+
+    @MainActor
+    static func testStopDuringRetryDelay() async throws {
+        let gate = Gate()
+        var attempts = 0, waiting = false, cleanups = 0, errors = 0
+        let session = SessionController(
+            connect: { attempts += 1; throw RecoverableSessionError(message: "Mac unavailable") },
+            authorize: {}, startCamera: {}, startAudio: {},
+            stopImmediately: {}, stopCamera: { cleanups += 1 },
+            retryDelays: [.seconds(10)], wait: { _ in waiting = true; await gate.wait() }
+        )
+        session.onError = { _ in errors += 1 }
+        session.start()
+        try await eventually { waiting }
+        session.stop(); gate.open()
+        try await eventually { session.phase == .idle }
+        precondition(attempts == 1 && cleanups == 1 && errors == 0, "Stop must cancel pending recovery")
+    }
+
+    @MainActor
+    static func testStableConnectionResetsBudget() async throws {
+        var time = Date(timeIntervalSince1970: 1000)
+        var starts = 0
+        let session = SessionController(
+            connect: { starts += 1 }, authorize: {}, startCamera: {}, startAudio: {},
+            stopImmediately: {}, stopCamera: {}, retryDelays: [.zero], now: { time }
+        )
+        session.start()
+        try await eventually { session.phase == .running }
+        session.recover("Disconnected")
+        try await eventually { session.phase == .running && starts == 2 }
+        time.addTimeInterval(31)
+        session.recover("Disconnected after a stable session")
+        try await eventually { session.phase == .running && starts == 3 }
+        session.stop()
+        try await eventually { session.phase == .idle }
+    }
+
+    @MainActor
+    static func testRecoveryWaitsForSpeech(cancel: Bool) async throws {
+        let speech = Gate()
+        var cameraStarts = 0, cameraStops = 0, announcing = false, errors = 0
+        let session = SessionController(
+            connect: {}, authorize: {}, startCamera: { cameraStarts += 1 }, startAudio: {},
+            stopImmediately: {}, stopCamera: { cameraStops += 1 }, retryDelays: [.zero]
+        )
+        session.onRecovery = { _, _, _ in
+            precondition(cameraStops == 1, "Camera must stop before recovery speech")
+            announcing = true
+            await speech.wait()
+        }
+        session.onError = { _ in errors += 1 }
+        session.start()
+        try await eventually { session.phase == .running }
+        session.recover("Disconnected")
+        try await eventually { announcing }
+        precondition(session.phase == .recovering && cameraStarts == 1,
+                     "Camera must not restart while speech is in progress")
+        if cancel { session.stop() }
+        speech.open()
+        if cancel {
+            try await eventually { session.phase == .idle }
+            precondition(cameraStarts == 1 && errors == 0, "Stop must cancel recovery speech without a restart")
+        } else {
+            try await eventually { session.phase == .running && cameraStarts == 2 }
+            session.stop()
+            try await eventually { session.phase == .idle }
+        }
+    }
+
+    static func testCameraFreshness() {
+        let time = Date(timeIntervalSince1970: 1000)
+        precondition(!CameraFreshness.isFresh(nil, now: time))
+        precondition(CameraFreshness.isFresh(time, now: time))
+        precondition(CameraFreshness.isFresh(time.addingTimeInterval(-2.49), now: time))
+        precondition(!CameraFreshness.isFresh(time.addingTimeInterval(-2.5), now: time))
+        precondition(!CameraFreshness.isFresh(time.addingTimeInterval(-30), now: time))
+        precondition(!CameraFreshness.isFresh(time.addingTimeInterval(1), now: time))
     }
 }

@@ -2,7 +2,7 @@
 
 A Mac + iPhone prototype that connects Meta Ray-Ban glasses to the **Codex access included in an eligible ChatGPT subscription**. No OpenAI API key or separate API billing is used.
 
-**This is a working development foundation, not the complete live-video ChatGPT Voice experience.** It listens to a question, attaches a recent glasses camera image, waits for a Codex answer, and speaks that answer. The iPhone pauses recognition while answering, then listens again. A real ChatGPT Plus image question has passed; physical glasses validation is still required.
+**This is a working development foundation, not the complete live-video ChatGPT Voice experience.** It listens to a question, attaches a recent glasses camera image, waits for a Codex answer, and speaks that answer. The iPhone pauses recognition while answering, then listens again. The basic camera/question flow on `main` passed physical-glasses testing. This recovery feature branch currently fails on physical glasses with a camera internal error; the audio-sequencing revision did not resolve it. Use `main` for the working baseline.
 
 ## Why this architecture
 
@@ -43,13 +43,13 @@ The checked-in Xcode project is `ios/RayBridge.xcodeproj`. It requires iOS 18+, 
 3. Select the physical iPhone in Xcode and Run. Complete iPhone development trust/setup if prompted.
 4. Scan the Mac pairing QR with the iPhone Camera. RayBridge opens with the link filled in; select **Pair Mac** in **Setup**. Alternatively, open **Setup** and copy the link into RayBridge's pairing field. The token is stored in the iPhone Keychain.
 5. In **Setup**, select **Register with Meta AI** and complete registration, then select **Done**. Ensure glasses audio is connected in iOS Bluetooth.
-6. Select **Start RayBridge**. It connects to your saved Mac, checks microphone/speech permissions, starts the glasses camera, waits for a usable image, and begins listening. Grant camera access in Meta AI if requested, then return to RayBridge. Wait for **Glasses camera connected**, ask a question, pause, and wait for the spoken answer. On subsequent launches, just select **Start RayBridge**.
+6. Select **Start RayBridge**. It connects to your saved Mac, checks microphone/speech permissions, starts the glasses camera, waits for a usable image, and begins listening. Grant camera access in Meta AI if requested, then return to RayBridge. Wait for **Ready. Ask your question.**, ask a question, pause, and wait for the spoken answer. On subsequent launches, just select **Start RayBridge**.
 
-English (US) **on-device** speech recognition is required for the voice prototype. If it is unavailable, typed questions still work. **Setup → Use iPhone audio for testing** explicitly allows phone audio when glasses are unavailable. Default operation requires a Bluetooth headset route. Bluetooth routing, SDK streaming, and speech recognition cannot be considered validated by a successful simulator build.
+English (US) **on-device** speech recognition is required for the voice prototype. The current Start flow requires it even when using the typed-question field. **Setup → Use iPhone audio for testing** explicitly allows phone audio when glasses are unavailable. Default operation requires a Bluetooth headset route. Bluetooth routing, SDK streaming, and speech recognition cannot be considered validated by a successful simulator build.
 
 The large **Stop RayBridge** control stops the microphone, speech, camera, pending model answer, and Mac connection. It also cancels startup. Wait for camera teardown to finish before starting again. Each Start opens a new Mac conversation; previous transcript/answer text remains visible until you select **New conversation**. Backgrounding stops the session, except during the Meta AI camera-permission handoff; select **Start RayBridge** when returning. Background operation and a locked-phone experience are not implemented.
 
-If startup fails, RayBridge stops any partially started camera/audio/connection and displays the error. Select **Start RayBridge** to retry once the underlying issue is resolved. Registration and camera permission do not by themselves confirm a camera connection. RayBridge waits for asynchronous device selection before creating a session; discovery and compatibility failures now have specific messages. The Xcode marker `First glasses camera image received` confirms actual image delivery. A successful build alone does not validate the physical glasses connection.
+Start gives tactile feedback while the glasses play their own startup prompts. RayBridge speaks readiness once the camera and audio are prepared, then opens the microphone. It also speaks reconnection, stopped, and failure status. Temporary Mac/camera/audio disconnects trigger up to three retries, delayed by 2, 5, and 10 seconds, after recovery speech finishes, with each startup operation retaining its own timeout. A link must stay healthy for 30 seconds before its retry budget resets. Stop and backgrounding cancel recovery. Permission/configuration failures require user action. If recovery fails, resolve the stated issue and select **Start RayBridge** again. Registration and camera permission do not by themselves confirm a camera connection. RayBridge waits for asynchronous device selection before creating a session; discovery and compatibility failures now have specific messages. The Xcode marker `First glasses camera image received` confirms actual image delivery. A successful build alone does not validate the physical glasses connection.
 
 If editing `ios/project.yml`, regenerate the project with `xcodegen generate --spec ios/project.yml`. Preserve your local development-team setting when regenerating; select your signing team again if it is reset.
 
@@ -118,5 +118,15 @@ For the unified Start/Stop flow, verify on the iPhone:
 1. From a fresh launch with existing pairing/registration, tap **Start RayBridge** once. Confirm camera readiness and ask a visual question without any other connection controls.
 2. Tap **Stop RayBridge** while listening or while an answer is pending/being spoken. Confirm the camera and audio stop, then Start again and ask another question.
 3. Tap Stop during startup. Confirm it stays stopped after any outstanding permission dialog or SDK callback completes.
-4. With the Mac unavailable, verify startup reports the connection error and allows a fresh Start after the Mac is available.
+4. With the Mac temporarily unavailable, verify spoken reconnect feedback and automatic recovery after it becomes available. Then test Stop during the retry delay and retry exhaustion.
 5. Open **Setup** while stopped and confirm pairing and registration are retained.
+
+## Spoken feedback and recovery
+
+Status uses VoiceOver when enabled and the app's speech output otherwise. The app keeps its audio route active between questions and answers, and releases it after camera teardown. Recovery speech finishes before camera startup resumes. The microphone pauses for status/answer speech; VoiceOver completion is observed before listening resumes, with a 15-second fallback if completion is missing. Connection-loss status can use the iPhone speaker if glasses audio is unavailable; model answers still require the configured audio route. Validate VoiceOver navigation and actual glasses routing on hardware.
+
+While running, a one-second watchdog checks the latest usable image. Images must be less than 2.5 seconds old on the phone. Missing/stale frames pause questions and trigger recovery. The iPhone asks the Mac to require a fresh image as well, so expiration during account/thread preparation produces an explicit error rather than a text-only model request. Update both apps together for this behavior.
+
+Recovery starts a new Mac session. It cancels any interrupted question and asks the user to repeat it; it never automatically resubmits a question. Test temporary Mac and glasses disconnects, repeated failures, Stop during recovery, no-image questions, and VoiceOver on/off before considering recovery hardware-verified.
+
+Accessibility roadmap: [spoken status/recovery](https://github.com/soothslayer/RayBridge/issues/1), [repeat/interrupt controls](https://github.com/soothslayer/RayBridge/issues/2), [VoiceOver audit](https://github.com/soothslayer/RayBridge/issues/3), [Siri/Action button](https://github.com/soothslayer/RayBridge/issues/4), and [phone-in-pocket operation](https://github.com/soothslayer/RayBridge/issues/5).

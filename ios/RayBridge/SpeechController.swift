@@ -1,5 +1,6 @@
 import AVFoundation
 import Speech
+import UIKit
 
 @MainActor
 final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
@@ -18,10 +19,28 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
     private var generation = 0
     private var transcript = ""
     private var spokenUtterance: AVSpeechUtterance?
+    private var voiceOverAnnouncement: String?
+    private var announcementTimeout: Task<Void, Never>?
+    private var capturePrepared = false
     var allowPhoneAudio = false
-    var isSpeaking: Bool { synthesizer.isSpeaking }
+    var isSpeaking: Bool { spokenUtterance != nil || voiceOverAnnouncement != nil }
 
-    override init() { super.init(); synthesizer.delegate = self }
+    override init() {
+        super.init(); synthesizer.delegate = self
+        NotificationCenter.default.addObserver(forName: UIAccessibility.announcementDidFinishNotification, object: nil, queue: .main) { [weak self] notification in
+            let text = notification.userInfo?[UIAccessibility.announcementStringValueUserInfoKey] as? String
+            Task { @MainActor in
+                guard let self, let text, self.voiceOverAnnouncement == text else { return }
+                self.finishAnnouncement()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: UIAccessibility.voiceOverStatusDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !UIAccessibility.isVoiceOverRunning, self.voiceOverAnnouncement != nil else { return }
+                self.finishAnnouncement()
+            }
+        }
+    }
 
     func permissions() async throws {
         let speech = await withCheckedContinuation { continuation in
@@ -34,15 +53,39 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
         }
         try Task.checkCancellation()
     }
+    // Configure capture once, after the camera has opened. Keep the same route
+    // through readiness, listening, thinking and answers.
     private func audioSession() throws {
+        if capturePrepared {
+            guard allowPhoneAudio || hasBluetoothRoute else {
+                throw RecoverableSessionError(message: "Glasses audio is disconnected. Connect your glasses as a Bluetooth headset.")
+            }
+            return
+        }
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
         try session.setActive(true)
         if let glasses = session.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) {
             try session.setPreferredInput(glasses)
         } else if !allowPhoneAudio {
-            throw BridgeError.message("Connect your glasses as a Bluetooth headset before listening.")
+            throw RecoverableSessionError(message: "Glasses audio is disconnected. Connect your glasses as a Bluetooth headset.")
         }
+        capturePrepared = true
+    }
+    func prepareListening() throws {
+        try audioSession()
+        _ = try speechRecognizer()
+        let format = engine.inputNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw BridgeError.message("The microphone is not available.")
+        }
+    }
+    private func speechRecognizer() throws -> SFSpeechRecognizer {
+        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")), recognizer.isAvailable,
+              recognizer.supportsOnDeviceRecognition else {
+            throw BridgeError.message("On-device English speech recognition is unavailable. Enable it on this iPhone, or type your question below.")
+        }
+        return recognizer
     }
     var hasBluetoothRoute: Bool {
         AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .bluetoothHFP || $0.portType == .bluetoothA2DP }
@@ -50,10 +93,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
     func startListening() throws {
         stopListening()
         try audioSession()
-        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")), recognizer.isAvailable,
-              recognizer.supportsOnDeviceRecognition else {
-            throw BridgeError.message("On-device English speech recognition is unavailable. Enable it on this iPhone, or type your question below.")
-        }
+        let recognizer = try speechRecognizer()
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = true
@@ -112,11 +152,18 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
         if tapped { engine.inputNode.removeTap(onBus: 0); tapped = false }
         request?.endAudio(); recognition?.cancel(); recognition = nil; request = nil
     }
-    func speak(_ text: String) throws {
+    func speak(_ text: String, allowPhoneFallback: Bool = false) throws {
         stopListening()
-        try audioSession()
-        guard allowPhoneAudio || hasBluetoothRoute else {
-            throw BridgeError.message("Glasses audio disconnected. The answer is available on screen.")
+        if allowPhoneFallback && !capturePrepared {
+            // Offline feedback must not open a Bluetooth microphone/call session.
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .spokenAudio)
+            try session.setActive(true)
+        } else {
+            try audioSession()
+        }
+        guard allowPhoneFallback || allowPhoneAudio || hasBluetoothRoute else {
+            throw RecoverableSessionError(message: "Glasses audio disconnected. The answer is available on screen.")
         }
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
@@ -124,9 +171,44 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
         spokenUtterance = utterance
         synthesizer.speak(utterance)
     }
-    func stop() {
+    func speakStatus(_ text: String) throws {
+        stopListening()
+        spokenUtterance = nil; synthesizer.stopSpeaking(at: .immediate)
+        announcementTimeout?.cancel(); voiceOverAnnouncement = nil
+        if UIAccessibility.isVoiceOverRunning {
+            voiceOverAnnouncement = text
+            UIAccessibility.post(notification: .announcement, argument: text)
+            // UIKit can omit completion when assistive technology is switched.
+            announcementTimeout = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(15))
+                guard !Task.isCancelled, let self, self.voiceOverAnnouncement == text else { return }
+                self.finishAnnouncement()
+            }
+        } else {
+            // Connection-loss feedback must remain audible if glasses audio is gone.
+            try speak(text, allowPhoneFallback: true)
+        }
+    }
+    private func finishAnnouncement() {
+        announcementTimeout?.cancel(); announcementTimeout = nil
+        voiceOverAnnouncement = nil
+        onFinishedSpeaking?()
+    }
+    func speakStatusAndWait(_ text: String) async throws {
+        try speakStatus(text)
+        while isSpeaking {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try Task.checkCancellation()
+    }
+    func stopSpeech() {
+        announcementTimeout?.cancel(); announcementTimeout = nil; voiceOverAnnouncement = nil
         spokenUtterance = nil
         stopListening(); synthesizer.stopSpeaking(at: .immediate)
+    }
+    func stop() {
+        stopSpeech()
+        capturePrepared = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {

@@ -38,6 +38,11 @@ export class PhoneSession {
           if (this.closed || generation !== this.generation) return;
           this.threadId = threadId;
           const frame = this.frame && this.now() - this.frame.at <= FRAME_MAX_AGE_MS ? this.frame.jpeg : null;
+          if (message.requiresImage === true && !frame) {
+            const error = new Error('No current camera image reached the Mac. Reconnect the camera and ask again.');
+            error.code = 'camera_unavailable';
+            throw error;
+          }
           this.active = { text: '', turnId: null };
           this.send({ type: 'thinking', hasImage: !!frame });
           this.timer = setTimeout(() => { this.cancel(); this.send({ type: 'error', message: 'The answer took too long. Please try again.' }); }, this.turnTimeout);

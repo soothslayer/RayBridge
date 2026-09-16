@@ -23,6 +23,7 @@ final class GlassesCamera {
     var onFrame: ((Data) -> Void)?
     var onStatus: ((String, Bool) -> Void)?
     var onRegistration: ((String) -> Void)?
+    var onFailure: ((Error) -> Void)?
     private(set) var awaitingPermission = false
     private var generation = 0
     private var receivedFrame = false
@@ -98,6 +99,9 @@ final class GlassesCamera {
         } catch {
             let message = Self.permissionMessage(error)
             RayBridgeDiagnostics.event(message)
+            if error == .noDevice || error == .noDeviceWithConnection || error == .connectionError {
+                throw RecoverableSessionError(message: String(describing: message))
+            }
             throw BridgeError.message(String(describing: message))
         }
         try Task.checkCancellation()
@@ -143,6 +147,9 @@ final class GlassesCamera {
                     message = "Meta reports connected glasses, but automatic camera selection failed. Reopen RayBridge and reconnect the camera."
                 }
                 RayBridgeDiagnostics.event(message)
+                let requiresAction = CBManager.authorization == .denied || CBManager.authorization == .restricted ||
+                    devices.contains { $0.compatibility() == .deviceUpdateRequired || $0.compatibility() == .sdkUpdateRequired }
+                if !requiresAction { throw RecoverableSessionError(message: String(describing: message)) }
                 throw BridgeError.message(String(describing: message))
             }
             try await Task.sleep(for: .milliseconds(100))
@@ -152,6 +159,7 @@ final class GlassesCamera {
         do { device = try wearables.createSession(deviceSelector: sessionSelector) }
         catch {
             RayBridgeDiagnostics.event("Meta SDK rejected device session creation")
+            if error == .noEligibleDevice { throw RecoverableSessionError(message: "The glasses camera connection is unavailable.") }
             throw BridgeError.message("The glasses are not available for a camera session. Check their connection in Meta AI, then reconnect the camera.")
         }
         self.device = device
@@ -166,11 +174,11 @@ final class GlassesCamera {
                         try Task.checkCancellation()
                         if state == .started { return }
                     }
-                    throw BridgeError.message("Glasses disconnected before the camera started.")
+                    throw RecoverableSessionError(message: "Glasses disconnected before the camera started.")
                 }
                 group.addTask {
                     try await Task.sleep(for: .seconds(20))
-                    throw BridgeError.message("Glasses did not connect. Check Meta AI and try again.")
+                    throw RecoverableSessionError(message: "Glasses did not connect. Check their connection in Meta AI.")
                 }
                 defer { group.cancelAll() }
                 try await group.next()
@@ -210,8 +218,15 @@ final class GlassesCamera {
                     guard let self, self.generation == current else { return }
                     let message = Self.streamMessage(error)
                     RayBridgeDiagnostics.event(message)
-                    self.streamFailure = BridgeError.message(String(describing: message))
+                    let failure: Error
+                    switch error {
+                    case .deviceNotFound, .deviceNotConnected, .timeout, .videoStreamingError:
+                        failure = RecoverableSessionError(message: String(describing: message))
+                    default: failure = BridgeError.message(String(describing: message))
+                    }
+                    self.streamFailure = failure
                     self.onStatus?(String(describing: message), false)
+                    self.onFailure?(failure)
                 }
             })
             await stream.start()
@@ -220,7 +235,7 @@ final class GlassesCamera {
                 try Task.checkCancellation()
                 if let streamFailure { throw streamFailure }
                 guard ContinuousClock.now < deadline else {
-                    throw BridgeError.message("No image received from the glasses. Check that they are on and being worn, then reconnect the camera.")
+                    throw RecoverableSessionError(message: "No image received from the glasses. Check that they are on and being worn.")
                 }
                 try await Task.sleep(for: .milliseconds(100))
             }

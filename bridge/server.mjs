@@ -78,7 +78,10 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
         const message = JSON.parse(data.toString());
         if (!message || typeof message !== 'object') throw new Error('Invalid message.');
         await session.receive(message);
-      } catch (error) { send({ type: 'error', message: error.message }); }
+      } catch (error) {
+        send({ type: 'error', message: error.message,
+          ...(error.code === 'camera_unavailable' ? { code: 'camera_unavailable' } : {}) });
+      }
     });
     ws.on('error', () => ws.terminate());
     ws.on('close', () => { session.close(); phones.delete(ws); });

@@ -24,7 +24,7 @@ final class CertificatePin: NSObject, URLSessionDelegate, @unchecked Sendable {
 @MainActor
 final class BridgeConnection {
     var onMessage: (([String: Any]) -> Void)?
-    var onError: ((String) -> Void)?
+    var onError: ((Error) -> Void)?
     private var session: URLSession?
     private var socket: URLSessionWebSocketTask?
     private var receiver: Task<Void, Never>?
@@ -47,7 +47,8 @@ final class BridgeConnection {
         timeout = Task { [weak self] in
             try? await Task.sleep(for: .seconds(15))
             guard !Task.isCancelled, let self, !self.ready else { return }
-            self.disconnect(); self.onError?("The Mac did not answer. Check Wi-Fi, pairing, and the Mac bridge.")
+            self.disconnect()
+            self.onError?(RecoverableSessionError(message: "The Mac did not answer. Check Wi-Fi and that RayBridge is open on your Mac."))
         }
         receiver = Task { [weak self] in
             do {
@@ -65,7 +66,17 @@ final class BridgeConnection {
             } catch {
                 guard !Task.isCancelled else { return }
                 self?.disconnect()
-                self?.onError?("Connection to the Mac was lost. Reconnect to continue.")
+                let code = (error as? URLError)?.code
+                if (socket.response as? HTTPURLResponse)?.statusCode == 503 {
+                    self?.onError?(RecoverableSessionError(message: "The Mac bridge is temporarily unavailable."))
+                    return
+                }
+                switch code {
+                case .timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet:
+                    self?.onError?(RecoverableSessionError(message: "Connection to your Mac was lost."))
+                default:
+                    self?.onError?(BridgeError.message("The Mac connection could not be established. Check the Mac app and your pairing in Setup."))
+                }
             }
         }
     }

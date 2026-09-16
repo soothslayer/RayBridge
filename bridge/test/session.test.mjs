@@ -37,6 +37,29 @@ test('stale frames and camera-off are never reused', async t => {
   await session.receive({ type: 'ask', text: 'Look again' });
   assert.equal(codex.calls.at(-1)[3], null);
 });
+test('required-image questions never invoke the model with missing or stale frames', async t => {
+  const { codex, session, advance, output } = setup(); t.after(() => session.close());
+  const ask = () => session.receive({ type: 'ask', text: 'Describe what I see', requiresImage: true });
+  await assert.rejects(ask(), { code: 'camera_unavailable' });
+  await session.receive({ type: 'frame', jpeg }); advance(4000);
+  await assert.rejects(ask(), { code: 'camera_unavailable' });
+  await session.receive({ type: 'frame', jpeg });
+  await session.receive({ type: 'camera.off' });
+  await assert.rejects(ask(), { code: 'camera_unavailable' });
+  assert.equal(codex.calls.some(call => call[0] === 'ask'), false);
+  assert.equal(output.some(event => event.type === 'thinking'), false);
+  await session.receive({ type: 'frame', jpeg });
+  await ask();
+  assert.equal(codex.calls.at(-1)[3], jpeg);
+  assert.equal(output.at(-1).hasImage, true);
+});
+test('required image expiring during thread startup is rejected before inference', async t => {
+  const { codex, session, advance } = setup(); t.after(() => session.close());
+  codex.newThread = async () => { advance(4000); return 'thread-1'; };
+  await session.receive({ type: 'frame', jpeg });
+  await assert.rejects(session.receive({ type: 'ask', text: 'Look', requiresImage: true }), { code: 'camera_unavailable' });
+  assert.equal(codex.calls.some(call => call[0] === 'ask'), false);
+});
 test('subscription sign-in required; empty and oversized questions rejected', async t => {
   const { codex, session } = setup(); t.after(() => session.close()); codex.signedIn = false;
   await assert.rejects(session.receive({ type: 'ask', text: 'Hello' }), /Sign in/);
