@@ -71,6 +71,20 @@ scripts/iphone-console.command "Your iPhone name"
 
 This launches without LLDB and streams Debug-build stdout to the terminal. To view unified logs independently, open macOS Console, select the connected iPhone, start streaming, and filter for the RayBridge process/subsystem.
 
+## TestFlight archive checks
+
+Use the **RayBridge** scheme for archives; **RayBridge Device Logs** disables archiving. The app includes an opaque AppIcon asset catalog for iPhone, iPad, and the App Store. Xcode generates the icon Info.plist entries from that catalog. The iPad-specific orientation list supports all four orientations for multitasking.
+
+Xcode Cloud runs `ios/ci_scripts/ci_post_xcodebuild.sh` after archiving to check the actual app bundle for the required icon metadata, 120×120 and 152×152 PNGs, and iPad orientations. For a local archive, run:
+
+```sh
+python3 scripts/verify-ios-archive.py path/to/RayBridge.xcarchive
+```
+
+The source build number is 2 (version 0.1.0). Xcode Cloud may assign its own higher build number. Each uploaded build needs a new number. Icon artwork can be regenerated from the repository root with `swift scripts/generate-app-icon.swift`.
+
+These checks cover the validation failures reported for build 1; they do not replace App Store Connect processing, signing validation, or glasses testing.
+
 ## Data and connection behavior
 
 - Mac setup is served only on loopback port 8844. Phone traffic uses TLS on port 8845 and an unpredictable bearer token. The iPhone pins the Mac's certificate fingerprint from pairing; it does not globally disable certificate checks.

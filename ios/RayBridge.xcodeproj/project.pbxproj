@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		6F24B7809E094535AB590101 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6F24B7809E094535AB590102 /* Assets.xcassets */; };
 		1A55FA0190C34781943A7311 /* SessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A55FA0190C34781943A7312 /* SessionController.swift */; };
 		23F6D9EFBB273E66A6FB6672 /* RayBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C5EE867F5E3F8654E9009D1 /* RayBridgeApp.swift */; };
 		467447855039BD64DBF629C3 /* BridgeConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40A63ED8D2E23052DFA68090 /* BridgeConnection.swift */; };
@@ -19,8 +20,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		1A55FA0190C34781943A7312 /* SessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionController.swift; sourceTree = "<group>"; };
+		6F24B7809E094535AB590102 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		0C5EE867F5E3F8654E9009D1 /* RayBridgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RayBridgeApp.swift; sourceTree = "<group>"; };
+		1A55FA0190C34781943A7312 /* SessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionController.swift; sourceTree = "<group>"; };
 		40A63ED8D2E23052DFA68090 /* BridgeConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeConnection.swift; sourceTree = "<group>"; };
 		416AB305A59A692B92AFD3D8 /* SpeechController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechController.swift; sourceTree = "<group>"; };
 		607F3F3DD11823BC3C65DB43 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
@@ -62,6 +64,7 @@
 		380EB3478422066192DA5D93 /* RayBridge */ = {
 			isa = PBXGroup;
 			children = (
+				6F24B7809E094535AB590102 /* Assets.xcassets */,
 				955DB17DA6A3D4AD29CAC310 /* AppModel.swift */,
 				40A63ED8D2E23052DFA68090 /* BridgeConnection.swift */,
 				A682C67C95C85EF1F2CF880A /* GlassesCamera.swift */,
@@ -83,6 +86,7 @@
 			buildPhases = (
 				ECC12619AADBF03DBBD8A13F /* Sources */,
 				23594F001AC0F954C0A38D74 /* Frameworks */,
+				6F24B7809E094535AB590103 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -133,6 +137,17 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		6F24B7809E094535AB590103 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6F24B7809E094535AB590101 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		ECC12619AADBF03DBBD8A13F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -157,7 +172,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = KUGPEZH97N;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RayBridge/Info.plist;
@@ -167,6 +182,7 @@
 				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = org.raybridge.ios;
+				PRODUCT_NAME = RayBridge;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -235,7 +251,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = KUGPEZH97N;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RayBridge/Info.plist;
@@ -245,6 +261,7 @@
 				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = org.raybridge.ios;
+				PRODUCT_NAME = RayBridge;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

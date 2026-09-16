@@ -2,6 +2,15 @@
 
 Updated September 16, 2026, after successful physical-glasses testing on main.
 
+## TestFlight packaging fix on main
+
+- Apple rejected version 0.1.0 build 1 with ITMS-90022, ITMS-90023, ITMS-90474, and ITMS-90713: missing iPhone/iPad icons, missing icon metadata, and incomplete iPad multitasking orientations.
+- Added AppIcon catalog with 18 opaque PNG variants and reproducible vector artwork in `scripts/generate-app-icon.swift`. Registered the asset catalog in the Xcode resources phase; the existing AppIcon compiler setting now generates icon metadata.
+- Added all four iPad orientations, aligned `ios/project.yml` with the existing iPhone+iPad target, and bumped the source build number to 2. Camera/audio code remains the working main version.
+- Release unsigned archive at `.build/RayBridge-validation.xcarchive` succeeded. Actual bundle includes 120x120 and 152x152 PNGs, AppIcon metadata, and all four iPad orientations. Guard also rejected fixtures reproducing each of Apple's four failures.
+- Xcode Cloud post-archive hook runs `scripts/verify-ios-archive.py`; final acceptance still depends on the next cloud build and Apple processing.
+- Unrelated local Device Logs scheme and Xcode Cloud manifest edits were preserved.
+
 ## Completed: unified Start/Stop
 
 - Branch `feat/unified-start-stop` builds on working main commit `9fd8029`.
