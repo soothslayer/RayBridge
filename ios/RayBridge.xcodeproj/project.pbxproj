@@ -1,0 +1,361 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		23F6D9EFBB273E66A6FB6672 /* RayBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C5EE867F5E3F8654E9009D1 /* RayBridgeApp.swift */; };
+		467447855039BD64DBF629C3 /* BridgeConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40A63ED8D2E23052DFA68090 /* BridgeConnection.swift */; };
+		580D4F80DDE71E3F81D1175F /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 955DB17DA6A3D4AD29CAC310 /* AppModel.swift */; };
+		804BB218B99B03719A2AA945 /* Pairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 607F3F3DD11823BC3C65DB43 /* Pairing.swift */; };
+		8FD5466DB3D5A680064B1949 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = 430893438731BD07D7895E7E /* MWDATCore */; };
+		B176C516C2DCFADF2760D37F /* GlassesCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = A682C67C95C85EF1F2CF880A /* GlassesCamera.swift */; };
+		CB5356CB1B67442BD400F176 /* SpeechController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 416AB305A59A692B92AFD3D8 /* SpeechController.swift */; };
+		ECB401710364878149DADF44 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = 44B05B90D40F69CB87123015 /* MWDATCamera */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0C5EE867F5E3F8654E9009D1 /* RayBridgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RayBridgeApp.swift; sourceTree = "<group>"; };
+		40A63ED8D2E23052DFA68090 /* BridgeConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeConnection.swift; sourceTree = "<group>"; };
+		416AB305A59A692B92AFD3D8 /* SpeechController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechController.swift; sourceTree = "<group>"; };
+		607F3F3DD11823BC3C65DB43 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
+		955DB17DA6A3D4AD29CAC310 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		A682C67C95C85EF1F2CF880A /* GlassesCamera.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassesCamera.swift; sourceTree = "<group>"; };
+		CCCE0BA4F21D643889470A59 /* RayBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RayBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D8D45434725B53F14F44853E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		23594F001AC0F954C0A38D74 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8FD5466DB3D5A680064B1949 /* MWDATCore in Frameworks */,
+				ECB401710364878149DADF44 /* MWDATCamera in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1CFE9DAFB04FFBC29217D01C = {
+			isa = PBXGroup;
+			children = (
+				380EB3478422066192DA5D93 /* RayBridge */,
+				2C808F1D90D66473834BD603 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		2C808F1D90D66473834BD603 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				CCCE0BA4F21D643889470A59 /* RayBridge.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		380EB3478422066192DA5D93 /* RayBridge */ = {
+			isa = PBXGroup;
+			children = (
+				955DB17DA6A3D4AD29CAC310 /* AppModel.swift */,
+				40A63ED8D2E23052DFA68090 /* BridgeConnection.swift */,
+				A682C67C95C85EF1F2CF880A /* GlassesCamera.swift */,
+				D8D45434725B53F14F44853E /* Info.plist */,
+				607F3F3DD11823BC3C65DB43 /* Pairing.swift */,
+				0C5EE867F5E3F8654E9009D1 /* RayBridgeApp.swift */,
+				416AB305A59A692B92AFD3D8 /* SpeechController.swift */,
+			);
+			path = RayBridge;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		BE1C34176BB875D5D77D7A17 /* RayBridge */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3E7EE963D217824D6D019F16 /* Build configuration list for PBXNativeTarget "RayBridge" */;
+			buildPhases = (
+				ECC12619AADBF03DBBD8A13F /* Sources */,
+				23594F001AC0F954C0A38D74 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RayBridge;
+			packageProductDependencies = (
+				430893438731BD07D7895E7E /* MWDATCore */,
+				44B05B90D40F69CB87123015 /* MWDATCamera */,
+			);
+			productName = RayBridge;
+			productReference = CCCE0BA4F21D643889470A59 /* RayBridge.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5F073A09E2AF11C15230EA96 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					BE1C34176BB875D5D77D7A17 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = B99DC29164319B1D82C5D620 /* Build configuration list for PBXProject "RayBridge" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 1CFE9DAFB04FFBC29217D01C;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B305B1399CE80CC9D7DBD908 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2C808F1D90D66473834BD603 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				BE1C34176BB875D5D77D7A17 /* RayBridge */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		ECC12619AADBF03DBBD8A13F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				580D4F80DDE71E3F81D1175F /* AppModel.swift in Sources */,
+				467447855039BD64DBF629C3 /* BridgeConnection.swift in Sources */,
+				B176C516C2DCFADF2760D37F /* GlassesCamera.swift in Sources */,
+				804BB218B99B03719A2AA945 /* Pairing.swift in Sources */,
+				23F6D9EFBB273E66A6FB6672 /* RayBridgeApp.swift in Sources */,
+				CB5356CB1B67442BD400F176 /* SpeechController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		020C2DBE25BB0BE1AC833D4B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KUGPEZH97N;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RayBridge/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.raybridge.ios;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		216AA924520612606D117481 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		8B2F88E9F272205767A9EB6F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KUGPEZH97N;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RayBridge/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.raybridge.ios;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E3C8E805A1C7B205B4D9096B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3E7EE963D217824D6D019F16 /* Build configuration list for PBXNativeTarget "RayBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				020C2DBE25BB0BE1AC833D4B /* Debug */,
+				8B2F88E9F272205767A9EB6F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B99DC29164319B1D82C5D620 /* Build configuration list for PBXProject "RayBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E3C8E805A1C7B205B4D9096B /* Debug */,
+				216AA924520612606D117481 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B305B1399CE80CC9D7DBD908 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/facebook/meta-wearables-dat-ios";
+			requirement = {
+				kind = exactVersion;
+				version = 0.6.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		430893438731BD07D7895E7E /* MWDATCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B305B1399CE80CC9D7DBD908 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATCore;
+		};
+		44B05B90D40F69CB87123015 /* MWDATCamera */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B305B1399CE80CC9D7DBD908 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATCamera;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 5F073A09E2AF11C15230EA96 /* Project object */;
+}

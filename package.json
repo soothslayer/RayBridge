@@ -1,0 +1,13 @@
+{
+  "name": "raybridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node bridge/server.mjs",
+    "test": "node --test bridge/test/*.test.mjs",
+    "check": "node --check bridge/server.mjs && node --check bridge/codex.mjs && node --check bridge/session.mjs"
+  },
+  "dependencies": { "ws": "^8.18.3", "qrcode": "^1.5.4" }
+}

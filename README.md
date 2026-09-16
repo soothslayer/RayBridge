@@ -1,0 +1,90 @@
+# RayBridge
+
+A Mac + iPhone prototype that connects Meta Ray-Ban glasses to the **Codex access included in an eligible ChatGPT subscription**. No OpenAI API key or separate API billing is used.
+
+**This is a working development foundation, not the complete live-video ChatGPT Voice experience.** It listens to a question, attaches a recent glasses camera image, waits for a Codex answer, and speaks that answer. The iPhone pauses recognition while answering, then listens again. A real ChatGPT Plus image question has passed; physical glasses validation is still required.
+
+## Why this architecture
+
+OpenAI documents subscription sign-in and image-containing conversation turns through the [Codex app server](https://learn.chatgpt.com/docs/app-server). Its documented interfaces give us a subscription-based path for questions and snapshots. That does **not** establish subscription access to the separate [Realtime API](https://developers.openai.com/api/docs/guides/realtime).
+
+The project therefore preserves the subscription-only requirement, with a clear tradeoff: turn-based voice and per-question camera images instead of simultaneous speech and continuous model understanding of video. It creates new conversations; it does not import your existing ChatGPT chats, memories, or custom instructions. Subscription eligibility, available models, usage limits, and account policies apply. No latency target has been measured on real hardware.
+
+## Open the Mac app
+
+The local build is at `build/RayBridge.app`. Double-click it, or run:
+
+```sh
+open build/RayBridge.app
+```
+
+1. Choose **Sign in with ChatGPT** and complete the official browser flow using your friend's account.
+2. Keep the Mac and iPhone on the same private Wi-Fi network.
+3. Leave RayBridge running and keep the Mac awake.
+4. Pair the iPhone app using the QR code or pairing link.
+
+The development app bundles the Node and Codex executables from the build machine. This build is for Apple Silicon and is ad-hoc signed, not notarized. It is not an installer ready for general distribution. Rebuild for another CPU architecture or older macOS deployment target. Do not run the source server and Mac app at the same time: both use ports 8844/8845.
+
+To run from source, install Node.js 22+ and the official Codex CLI, then:
+
+```sh
+npm ci
+npm start
+```
+
+Open `http://127.0.0.1:8844` on that Mac. `scripts/start-mac.command` provides a double-click source launcher. To rebuild the native Mac wrapper, run `bash scripts/build-mac.sh`; this requires Xcode command-line tools and a native standalone Codex executable on PATH. The npm Codex launcher script is not accepted by the bundler.
+
+## Install the iPhone app
+
+The checked-in Xcode project is `ios/RayBridge.xcodeproj`. It requires iOS 18+, current Xcode, and a physical iPhone for real speech and glasses testing. Meta DAT is pinned to **0.6.0** in both the project and Swift package resolution.
+
+1. Open the Xcode project. Select the RayBridge target and your Apple development team in Signing & Capabilities. Choose a unique bundle identifier if required.
+2. Install Meta AI on the iPhone and pair the glasses there. Enable **Developer Mode** for the glasses. The included `MWDAT.MetaAppID = 0` is for that developer flow. For a release-channel build, replace the Meta app ID/client token and configure the project in Meta's developer console; do not ship the placeholder values. See [Meta registration documentation](https://github.com/facebook/meta-wearables-dat-ios/blob/main/plugins/mwdat-ios/skills/permissions-registration/SKILL.md).
+3. Select the physical iPhone in Xcode and Run. Complete iPhone development trust/setup if prompted.
+4. Scan the Mac pairing QR with the iPhone Camera. RayBridge opens with the link filled in; select **Pair Mac**. Alternatively, copy the link into RayBridge's pairing field. The token is stored in the iPhone Keychain.
+5. Select **Register with Meta AI**, complete registration, then select **Connect glasses camera**. Grant camera access in Meta AI.
+6. Ensure glasses audio is connected in iOS Bluetooth. Select **Start listening** and grant microphone/speech permissions. Ask a question, pause, and wait for the spoken answer.
+
+English (US) **on-device** speech recognition is required for the voice prototype. If it is unavailable, typed questions still work. **Use iPhone audio for testing** explicitly allows phone audio when glasses are unavailable. Default operation requires a Bluetooth headset route. Bluetooth routing, SDK streaming, and speech recognition cannot be considered validated by a successful simulator build.
+
+The large **Stop** control stops listening, speech, and a pending model answer. The separate **Stop glasses camera** control stops the camera. Backgrounding during an active conversation/camera stream pauses the session; reconnect when returning. Background operation and a locked-phone experience are not implemented.
+
+If editing `ios/project.yml`, regenerate the project with `xcodegen generate --spec ios/project.yml`.
+
+## Data and connection behavior
+
+- Mac setup is served only on loopback port 8844. Phone traffic uses TLS on port 8845 and an unpredictable bearer token. The iPhone pins the Mac's certificate fingerprint from pairing; it does not globally disable certificate checks.
+- One phone can connect at a time. **Disconnect and replace pairing link** revokes the old token and disconnects the phone. Re-pair if the Mac's address or certificate changes. IPv4 private LAN addresses are supported; Bonjour discovery and IPv6 are not implemented.
+- Meta streams camera frames to the iPhone. The app samples up to one JPEG per second locally and retains the most recent one in memory. A question sends that frame to the Mac only if it is recent. The Mac keeps one frame and rejects stale visual context. Idle streaming does not continuously submit model turns.
+- Audio is transcribed on the iPhone. Question text and an optional JPEG travel via the Mac to OpenAI through Codex. Text answers return to the iPhone and are spoken with Apple's speech synthesis.
+- Codex uses an app-specific profile under `~/Library/Application Support/RayBridge/codex`, separate from any existing Codex login. Tokens and the local TLS key live in the parent RayBridge directory. The app never copies browser cookies or reads your existing Codex credentials.
+- Conversations request ephemeral mode. RayBridge does not create recordings or transcript files. This is not a promise of zero retention by the OS, SDK, Codex diagnostics, or OpenAI; their applicable policies still govern data handling.
+- The phone protocol cannot invoke arbitrary Codex methods. Shell, browser, plugin, and multi-agent features are disabled; unsolicited tool requests are rejected, and turns use restricted read-only access.
+
+## Verification
+
+```sh
+npm test
+npm run check
+xcodebuild -project ios/RayBridge.xcodeproj -scheme RayBridge \
+  -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath .build/ios CODE_SIGNING_ALLOWED=NO build
+```
+
+Ten automated tests exercise authentication, admin-origin/Host protection, TLS/WebSocket transport, a simulated phone question/answer, token revocation, subscription enforcement, stale/missing images, overlapping questions, final-answer filtering, and disconnect cancellation. The Codex subprocess initialization/account-read smoke check also passed with a fresh signed-out profile.
+
+After sign-in through the Mac UI, a live ChatGPT Plus test sent a generated blue rectangle containing a white 7 through the same Codex adapter and conversation handler. It correctly returned **“Blue 7”**, approximately 7 seconds after subprocess startup. This validates account authentication and image inference, not iPhone speech latency or physical glasses behavior. Mac UI launch/pairing-copy, the iPhone simulator build, and the unsigned physical-iPhone build passed. The runtime requires current named permission profiles; the retired `readOnly.access` field is not used.
+
+See [hardware acceptance checks](docs/hardware-checks.md) before relying on the app. It is intended for descriptions and reading assistance; visual model answers can be mistaken, and this prototype is not a navigation or collision-avoidance system.
+
+## Project layout
+
+```text
+bridge/       Local HTTPS phone bridge, Codex adapter, Mac setup UI, tests
+mac/          Native AppKit/WebKit Mac wrapper
+ios/          SwiftUI app, Meta DAT camera, speech, pinned connection, Keychain pairing
+scripts/      Source launcher and Mac app builder
+docs/         Architecture and physical-device acceptance checks
+```
+
+The remaining work to achieve the original fully real-time experience is substantial: validate the physical iPhone/glasses loop, measure its latency, improve streaming answer playback and interruption, and investigate a documented subscription-compatible real-time media interface if OpenAI provides one. This prototype does not claim that interface exists.

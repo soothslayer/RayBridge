@@ -1,0 +1,31 @@
+name: RayBridge
+options:
+  bundleIdPrefix: org.raybridge
+  deploymentTarget:
+    iOS: "18.0"
+packages:
+  MetaWearablesDAT:
+    url: https://github.com/facebook/meta-wearables-dat-ios
+    exactVersion: 0.6.0
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  RayBridge:
+    type: application
+    platform: iOS
+    sources: [RayBridge]
+    dependencies:
+      - package: MetaWearablesDAT
+        product: MWDATCore
+      - package: MetaWearablesDAT
+        product: MWDATCamera
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.raybridge.ios
+        INFOPLIST_FILE: RayBridge/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
