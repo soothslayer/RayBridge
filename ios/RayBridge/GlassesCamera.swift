@@ -32,6 +32,7 @@ final class GlassesCamera {
     private var tokens: [any AnyListenerToken] = []
     private var configured = false
     private var selector: AutoDeviceSelector?
+    var isRegistered: Bool { configured && Wearables.shared.registrationState == .registered }
 
     func configure() throws {
         if !configured {
@@ -45,7 +46,30 @@ final class GlassesCamera {
     }
     func register() async throws {
         try configure()
-        try await Wearables.shared.startRegistration()
+        // SDK registration state can finish restoring after the Setup view opens.
+        // configure() refreshes the label; an existing registration needs no work.
+        guard !isRegistered else { return }
+        do {
+            try await Wearables.shared.startRegistration()
+        } catch {
+            switch error {
+            case .alreadyRegistered:
+                // Also handle a restoration race between the check and request.
+                onRegistration?("Registered with Meta AI")
+                return
+            case .configurationInvalid:
+                throw BridgeError.message("RayBridge's Meta registration settings are invalid. Check the app configuration.")
+            case .metaAINotInstalled:
+                throw BridgeError.message("Install Meta AI on this iPhone to register your glasses.")
+            case .networkUnavailable:
+                throw BridgeError.message("Meta registration needs a network connection. Check your connection and try again.")
+            case .unknown:
+                throw BridgeError.message("Meta AI could not complete registration. Try again in Setup.")
+            @unknown default:
+                throw BridgeError.message("Meta AI could not complete registration. Try again in Setup.")
+            }
+        }
+        if isRegistered { onRegistration?("Registered with Meta AI") }
     }
     func handle(_ url: URL) async throws {
         try configure()

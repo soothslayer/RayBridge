@@ -1,6 +1,19 @@
 # RayBridge handoff
 
-Updated September 16, 2026, after successful physical-glasses testing.
+Updated September 16, 2026, after successful physical-glasses testing on main.
+
+## Completed: unified Start/Stop
+
+- Branch `feat/unified-start-stop` builds on working main commit `9fd8029`.
+- User requested accessibility item #1 only, with physical confirmation before moving to the next item.
+- Main screen now offers Start RayBridge / Stop RayBridge. Setup contains pairing, registration, and phone-audio testing.
+- `SessionController` serializes Mac connection, audio permission checks, camera startup/first-frame readiness, and microphone startup. Stop immediately ends audio and the Mac connection, cancels startup, waits for the pending operation, then tears down the camera before another Start is allowed.
+- Closing the Mac socket cancels pending inference and starts a new conversation on the next Start. Existing displayed conversation text is retained until New conversation.
+- Startup errors clean up partially started resources. Camera permission handoffs remain allowed across backgrounding.
+- Added `bash scripts/test-ios-session.sh`: nine hardware-independent tests for startup order, duplicate taps, Stop, cancellation and failure at every startup stage.
+- All nine lifecycle tests, ten backend tests, backend syntax checks, and the unsigned physical-device build passed. Xcode Device Logs installed and launched this branch on the iPhone; `Main screen appeared` verified. The user approved committing and merging this work after the registration fix.
+- No automatic recovery, new spoken-status system, voice commands, App Intents, or locked-phone support has been added.
+- Follow-up: user reported `MWDATCore.RegistrationError error 0` when tapping Register despite a registered label. SDK case is `alreadyRegistered`. Registration now checks restored state before requesting, treats that typed error as success if it races the check, prevents simultaneous registration requests, and gives readable messages for other registration errors. Device build passed and was installed; the user subsequently approved merging.
 
 ## Verified status
 
@@ -55,8 +68,8 @@ xcodebuild -project ios/RayBridge.xcodeproj \
 
 ## Remaining work
 
-- The user wants to discuss making everyday operation easier for a blind person. These accessibility changes have not yet been implemented.
-- Prioritize one Start/Stop flow, spoken readiness and recovery, predictable VoiceOver navigation, repeat/interrupt controls, and testing with the intended user.
+- The user approved the single Start/Stop flow and requested GitHub issues for the remaining improvements, followed by implementation of spoken status and automatic recovery.
+- Remaining improvements: spoken readiness and recovery; repeat/interrupt controls; predictable VoiceOver navigation; Siri/Action button launch; investigate locked-phone operation.
 - Foreground-only: backgrounding an active session suspends it. Locked-phone operation requires investigation and physical testing, not a UI-only promise.
 - First-image timeout begins after awaiting stream.start(); a hung SDK start call is not independently bounded.
 - No periodic stale-frame UI watchdog exists; questions already reject stale images.

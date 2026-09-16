@@ -20,16 +20,18 @@ enum RayBridgeDiagnostics {
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var status = "Pair your Mac to begin"
+    @Published var status = "Tap Start RayBridge to begin"
     @Published var cameraStatus = "Camera off"
     @Published var connected = false
-    @Published var running = false
+    @Published private(set) var sessionPhase = SessionController.Phase.idle
+    @Published var showingSetup = false
+    var running: Bool { sessionPhase == .running }
+    var sessionActive: Bool { sessionPhase != .idle }
     @Published var busy = false
     @Published var cameraActive = false
-    @Published var cameraStarting = false
     @Published var cameraRequested = false
     @Published var registrationStatus = ""
-    @Published var cameraStopping = false
+    @Published private(set) var registeringGlasses = false
     @Published var transcript = ""
     @Published var answer = ""
     @Published var error: String?
@@ -41,16 +43,45 @@ final class AppModel: ObservableObject {
     private let camera = GlassesCamera()
     private let speech = SpeechController()
     private var frame: (data: Data, date: Date)?
-    private var cameraTask: Task<Void, Never>?
+    private var connectionFailure: String?
     private var activity = 0
     private var cameraAnnounced = false
     private var pendingCameraAnnouncement = false
+
+    private lazy var session = SessionController(
+        connect: { [unowned self] in try await connectForSession() },
+        authorize: { [unowned self] in try await speech.permissions() },
+        startCamera: { [unowned self] in
+            cameraRequested = true; cameraAnnounced = false
+            try await camera.start()
+        },
+        startAudio: { [unowned self] in
+            guard let frame, Date().timeIntervalSince(frame.date) < 2.5 else {
+                throw BridgeError.message("No current camera image. Tap Start RayBridge to try again.")
+            }
+            speech.allowPhoneAudio = phoneAudio
+            try speech.startListening()
+        },
+        stopImmediately: { [unowned self] in
+            activity += 1; busy = false; cameraRequested = false
+            pendingCameraAnnouncement = false; cameraActive = false; frame = nil
+            speech.stop()
+            // Closing the phone connection also cancels its pending Mac answer.
+            connection.disconnect(); connected = false
+            UIApplication.shared.isIdleTimerDisabled = false
+        },
+        stopCamera: { [unowned self] in await camera.stop() }
+    )
 
     init() {
         RayBridgeDiagnostics.event("App model initialization started")
         connection.onMessage = { [weak self] in self?.receive($0) }
         connection.onError = { [weak self] message in
-            self?.connected = false; self?.stop(); self?.fail(message)
+            guard let self else { return }
+            self.connected = false; self.connectionFailure = message
+            if self.sessionPhase == .connecting { return } // The startup task reports this failure.
+            guard self.sessionActive, self.sessionPhase != .stopping else { return }
+            self.stop(); self.fail(message)
         }
         camera.onFrame = { [weak self] data in
             guard let self, self.cameraRequested else { return }
@@ -65,18 +96,30 @@ final class AppModel: ObservableObject {
         camera.onStatus = { [weak self] text, active in
             guard let self else { return }
             self.cameraStatus = text; self.cameraActive = active
+            if self.sessionPhase == .startingCamera { self.status = text }
             if !active {
                 self.frame = nil
-                if self.connected { Task { try? await self.connection.send(["type": "camera.off"]) } }
+                let current = self.activity
+                if self.connected {
+                    Task {
+                        guard current == self.activity, self.connected else { return }
+                        try? await self.connection.send(["type": "camera.off"])
+                    }
+                }
             }
         }
         // Give Bluetooth discovery time to initialize before registration or a
         // camera request, and restore the registration label after relaunch.
         do { try camera.configure() }
         catch { cameraStatus = "Glasses discovery could not initialize. Reopen RayBridge." }
+        session.onPhase = { [weak self] phase in self?.sessionChanged(phase) }
+        session.onError = { [weak self] error in self?.fail(error.localizedDescription) }
         speech.onQuestion = { [weak self] text in self?.ask(text) }
         speech.onTranscript = { [weak self] in self?.transcript = $0 }
-        speech.onError = { [weak self] message in self?.stop(); self?.fail(message) }
+        speech.onError = { [weak self] message in
+            guard let self, self.running else { return }
+            self.stop(); self.fail(message)
+        }
         speech.onFinishedSpeaking = { [weak self] in
             guard let self else { return }
             if self.pendingCameraAnnouncement { self.announceCameraIfReady() }
@@ -90,8 +133,13 @@ final class AppModel: ObservableObject {
                 self.stop(); self.fail("Glasses audio disconnected. Reconnect the glasses, then start again.")
             }
         }
-        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.stop(); self?.status = "Audio interrupted. Start again when ready." }
+        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
+            let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            guard type == AVAudioSession.InterruptionType.began.rawValue else { return }
+            Task { @MainActor in
+                guard let self, self.running else { return }
+                self.stop(); self.fail("Audio interrupted. Tap Start RayBridge when ready.")
+            }
         }
         RayBridgeDiagnostics.event("App model initialization finished")
     }
@@ -103,53 +151,50 @@ final class AppModel: ObservableObject {
     func pair() {
         do {
             let pairing = try Pairing(link: pairingText)
-            try pairing.save(); pairedHost = pairing.host; pairingText = ""; connect()
+            guard !sessionActive else { return }
+            try pairing.save(); pairedHost = pairing.host; pairingText = ""; error = nil
+            status = "Mac paired. Tap Start RayBridge to begin."
         } catch { fail(error.localizedDescription) }
     }
-    func connect() {
+    private func connectForSession() async throws {
+        guard let pairing = Pairing.load() else {
+            throw BridgeError.message("Open Setup and pair your Mac first.")
+        }
         RayBridgeDiagnostics.event("Mac connection requested")
-        guard let pairing = Pairing.load() else { fail("Paste a pairing link from the Mac first."); return }
-        stop(); connected = false; error = nil; status = "Connecting to Mac…"
+        connected = false; connectionFailure = nil
         connection.connect(pairing)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(20))
+        while !connected {
+            try Task.checkCancellation()
+            if let connectionFailure { throw BridgeError.message(connectionFailure) }
+            guard ContinuousClock.now < deadline else {
+                throw BridgeError.message("The Mac did not answer. Check that RayBridge is open on your Mac and both devices are on the same Wi-Fi.")
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        try Task.checkCancellation()
     }
     func handle(_ url: URL) {
-        if url.host == "pair" { pairingText = url.absoluteString; status = "Pairing link received. Tap Pair Mac." }
+        if url.host == "pair" {
+            stop(); pairingText = url.absoluteString; showingSetup = true
+            status = "Pairing link received. Tap Pair Mac in Setup."
+        }
         else { Task { do { try await camera.handle(url) } catch { fail(error.localizedDescription) } } }
     }
     func registerGlasses() {
+        guard !sessionActive, !registeringGlasses else { return }
+        registeringGlasses = true; error = nil
         RayBridgeDiagnostics.event("Meta AI registration requested")
-        Task { do { try await camera.register() } catch { fail(error.localizedDescription) } }
-    }
-    func toggleCamera() {
-        RayBridgeDiagnostics.event("Glasses camera toggle requested")
-        guard !cameraStopping else { return }
-        if cameraRequested {
-            cameraRequested = false; pendingCameraAnnouncement = false
-            let task = cameraTask
-            task?.cancel(); cameraStopping = true; cameraActive = false; frame = nil
-            Task {
-                await task?.value
-                await camera.stop()
-                cameraStarting = false; cameraStopping = false
-            }
-        } else {
-            cameraRequested = true; cameraAnnounced = false; error = nil
-            cameraStarting = true; cameraStatus = "Connecting glasses camera…"
-            cameraTask = Task {
-                do { try await camera.start() }
-                catch {
-                    cameraRequested = false
-                    if !Task.isCancelled {
-                        cameraStatus = error.localizedDescription
-                        fail(error.localizedDescription)
-                    }
-                }
-                cameraStarting = false
-            }
+        Task {
+            defer { registeringGlasses = false }
+            do {
+                try await camera.register()
+                if !registrationStatus.isEmpty { status = "Glasses registered. Tap Start RayBridge to begin." }
+            } catch { fail(error.localizedDescription) }
         }
     }
     private func announceCameraIfReady() {
-        guard pendingCameraAnnouncement, cameraActive, !busy, !speech.isSpeaking else { return }
+        guard running, pendingCameraAnnouncement, cameraActive, !busy, !speech.isSpeaking else { return }
         pendingCameraAnnouncement = false
         if UIAccessibility.isVoiceOverRunning {
             UIAccessibility.post(notification: .announcement, argument: "Glasses camera connected")
@@ -164,57 +209,65 @@ final class AppModel: ObservableObject {
             }
         }
     }
-    func background() {
-        // Opening Meta AI for permission must not cancel that same request.
-        if camera.awaitingPermission { stop() }
-        else if running || cameraRequested { suspend() }
-    }
-    func start() {
-        RayBridgeDiagnostics.event("Listening requested")
-        guard connected else { fail("Connect to your Mac first."); return }
-        activity += 1
-        let current = activity
-        running = true; error = nil; status = "Preparing microphone…"
-        Task {
-            do {
-                try await speech.permissions()
-                guard running, current == activity else { return }
-                speech.allowPhoneAudio = phoneAudio
-                try speech.startListening(); status = "Listening"
-                UIApplication.shared.isIdleTimerDisabled = true
-            } catch { stop(); fail(error.localizedDescription) }
+    private func sessionChanged(_ phase: SessionController.Phase) {
+        sessionPhase = phase
+        switch phase {
+        case .idle:
+            if error == nil { status = "Stopped. Tap Start RayBridge to begin." }
+        case .connecting: status = "Connecting to your Mac…"
+        case .authorizing: status = "Checking microphone and speech permissions…"
+        case .startingCamera: status = "Connecting glasses camera…"
+        case .startingAudio: status = "Preparing microphone…"
+        case .running:
+            status = "Listening"
+            RayBridgeDiagnostics.event("RayBridge session ready with camera and microphone")
+            announceCameraIfReady()
+        case .stopping: status = "Stopping RayBridge…"
         }
     }
-    func stop() {
-        RayBridgeDiagnostics.event("Conversation stopped")
-        activity += 1; running = false; busy = false; speech.stop()
-        UIApplication.shared.isIdleTimerDisabled = false
-        if connected { Task { try? await connection.send(["type": "cancel"]) } }
-        status = connected ? "Ready" : "Disconnected"
+    func background() {
+        // The permission handoff is part of startup, not a request to stop it.
+        if camera.awaitingPermission { return }
+        if sessionActive { stop() }
     }
-    func suspend() {
-        stop()
-        if cameraRequested { toggleCamera() }
-        connection.disconnect(); connected = false; status = "Paused. Reconnect when ready."
+    func start() {
+        guard !sessionActive else { return }
+        guard Pairing.load() != nil else {
+            showingSetup = true; fail("Open Setup and pair your Mac first."); return
+        }
+        guard camera.isRegistered else {
+            showingSetup = true; fail("Open Setup and register your glasses with Meta AI first."); return
+        }
+        RayBridgeDiagnostics.event("Start RayBridge requested")
+        activity += 1; error = nil; pendingCameraAnnouncement = false
+        UIApplication.shared.isIdleTimerDisabled = true
+        session.start()
+    }
+    func stop() {
+        RayBridgeDiagnostics.event("Stop RayBridge requested")
+        session.stop()
     }
     func ask(_ text: String) {
-        guard connected, !busy, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard running, connected, !busy, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         RayBridgeDiagnostics.event("Question submitted to Mac")
         speech.stop(); busy = true; transcript = text; error = nil; status = "Asking ChatGPT…"
         let current = activity
         Task {
             do {
+                guard current == activity, running else { return }
                 if let frame, Date().timeIntervalSince(frame.date) < 2.5 {
                     try await connection.send(["type": "frame", "jpeg": frame.data.base64EncodedString()])
                 } else { try await connection.send(["type": "camera.off"]) }
                 guard current == activity else { return }
                 try await connection.send(["type": "ask", "text": text])
-            } catch { busy = false; stop(); fail(error.localizedDescription) }
+            } catch {
+                guard current == activity, running else { return }
+                stop(); fail(error.localizedDescription)
+            }
         }
     }
     func reset() {
         stop(); answer = ""; transcript = ""; frame = nil
-        Task { try? await connection.send(["type": "reset"]) }
     }
     private func resumeListening() {
         guard running, connected else { return }
@@ -225,17 +278,24 @@ final class AppModel: ObservableObject {
         switch message["type"] as? String {
         case "ready":
             RayBridgeDiagnostics.event("Mac connection ready")
-            connected = true; status = "Mac connected. Ready."; error = nil
-        case "thinking": status = message["hasImage"] as? Bool == true ? "Thinking with a current camera image…" : "Thinking. No current camera image."
+            guard sessionPhase == .connecting else { return }
+            connected = true
+        case "thinking":
+            guard running, busy else { return }
+            status = message["hasImage"] as? Bool == true ? "Thinking with a current camera image…" : "Thinking. No current camera image."
         case "answer":
-            guard busy, let text = message["text"] as? String else { return }
+            guard running, busy, let text = message["text"] as? String else { return }
             RayBridgeDiagnostics.event("Answer received from Mac")
             busy = false; answer = text; status = "Answer ready"
             do {
                 speech.allowPhoneAudio = phoneAudio
                 try speech.speak(text); status = "Speaking"
             } catch { stop(); fail(error.localizedDescription) }
-        case "error": busy = false; stop(); fail(message["message"] as? String ?? "The Mac reported an error.")
+        case "error":
+            let text = message["message"] as? String ?? "The Mac reported an error."
+            if sessionPhase == .connecting { connectionFailure = text; return }
+            guard sessionActive, sessionPhase != .stopping else { return }
+            stop(); fail(text)
         default: break
         }
     }

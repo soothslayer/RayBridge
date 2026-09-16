@@ -41,15 +41,15 @@ The checked-in Xcode project is `ios/RayBridge.xcodeproj`. It requires iOS 18+, 
 1. Open the Xcode project. Select the RayBridge target and your Apple development team in Signing & Capabilities. Choose a unique bundle identifier if required.
 2. Install Meta AI on the iPhone and pair the glasses there. Enable **Developer Mode** for the glasses. The included `MWDAT.MetaAppID = 0` is for that developer flow. For a release-channel build, replace the Meta app ID/client token and configure the project in Meta's developer console; do not ship the placeholder values. See [Meta registration documentation](https://github.com/facebook/meta-wearables-dat-ios/blob/main/plugins/mwdat-ios/skills/permissions-registration/SKILL.md).
 3. Select the physical iPhone in Xcode and Run. Complete iPhone development trust/setup if prompted.
-4. Scan the Mac pairing QR with the iPhone Camera. RayBridge opens with the link filled in; select **Pair Mac**. Alternatively, copy the link into RayBridge's pairing field. The token is stored in the iPhone Keychain.
-5. Select **Register with Meta AI**, complete registration, then select **Connect glasses camera**. Grant camera access in Meta AI. Wait for **Glasses camera connected**, which is shown only after a usable image arrives. The app announces that first image through VoiceOver when enabled, or its speech output otherwise. No spoken command is needed to start camera capture.
-6. Ensure glasses audio is connected in iOS Bluetooth. Select **Start listening** and grant microphone/speech permissions. Ask a question, pause, and wait for the spoken answer.
+4. Scan the Mac pairing QR with the iPhone Camera. RayBridge opens with the link filled in; select **Pair Mac** in **Setup**. Alternatively, open **Setup** and copy the link into RayBridge's pairing field. The token is stored in the iPhone Keychain.
+5. In **Setup**, select **Register with Meta AI** and complete registration, then select **Done**. Ensure glasses audio is connected in iOS Bluetooth.
+6. Select **Start RayBridge**. It connects to your saved Mac, checks microphone/speech permissions, starts the glasses camera, waits for a usable image, and begins listening. Grant camera access in Meta AI if requested, then return to RayBridge. Wait for **Glasses camera connected**, ask a question, pause, and wait for the spoken answer. On subsequent launches, just select **Start RayBridge**.
 
-English (US) **on-device** speech recognition is required for the voice prototype. If it is unavailable, typed questions still work. **Use iPhone audio for testing** explicitly allows phone audio when glasses are unavailable. Default operation requires a Bluetooth headset route. Bluetooth routing, SDK streaming, and speech recognition cannot be considered validated by a successful simulator build.
+English (US) **on-device** speech recognition is required for the voice prototype. If it is unavailable, typed questions still work. **Setup → Use iPhone audio for testing** explicitly allows phone audio when glasses are unavailable. Default operation requires a Bluetooth headset route. Bluetooth routing, SDK streaming, and speech recognition cannot be considered validated by a successful simulator build.
 
-The large **Stop** control stops listening, speech, and a pending model answer. The separate **Stop glasses camera** control stops the camera. Backgrounding during an active conversation/camera stream pauses the session; reconnect when returning. Background operation and a locked-phone experience are not implemented.
+The large **Stop RayBridge** control stops the microphone, speech, camera, pending model answer, and Mac connection. It also cancels startup. Wait for camera teardown to finish before starting again. Each Start opens a new Mac conversation; previous transcript/answer text remains visible until you select **New conversation**. Backgrounding stops the session, except during the Meta AI camera-permission handoff; select **Start RayBridge** when returning. Background operation and a locked-phone experience are not implemented.
 
-If camera startup fails, the camera panel retains the error even when you reconnect the Mac or restart listening. Registration and camera permission do not by themselves confirm a camera connection. RayBridge waits for asynchronous device selection before creating a session; discovery and compatibility failures now have specific messages. The Xcode marker `First glasses camera image received` confirms actual image delivery. A successful build alone does not validate the physical glasses connection.
+If startup fails, RayBridge stops any partially started camera/audio/connection and displays the error. Select **Start RayBridge** to retry once the underlying issue is resolved. Registration and camera permission do not by themselves confirm a camera connection. RayBridge waits for asynchronous device selection before creating a session; discovery and compatibility failures now have specific messages. The Xcode marker `First glasses camera image received` confirms actual image delivery. A successful build alone does not validate the physical glasses connection.
 
 If editing `ios/project.yml`, regenerate the project with `xcodegen generate --spec ios/project.yml`. Preserve your local development-team setting when regenerating; select your signing team again if it is reset.
 
@@ -108,3 +108,15 @@ docs/         Architecture and physical-device acceptance checks
 ```
 
 The remaining work to achieve the original fully real-time experience is substantial: validate the physical iPhone/glasses loop, measure its latency, improve streaming answer playback and interruption, and investigate a documented subscription-compatible real-time media interface if OpenAI provides one. This prototype does not claim that interface exists.
+
+## iOS session lifecycle checks
+
+On a Mac with Xcode installed, run `bash scripts/test-ios-session.sh`. The hardware-independent Swift tests cover startup ordering, waiting for camera readiness before audio, duplicate taps, full teardown, and Stop or failure during each startup stage. These checks do not replace physical-glasses testing.
+
+For the unified Start/Stop flow, verify on the iPhone:
+
+1. From a fresh launch with existing pairing/registration, tap **Start RayBridge** once. Confirm camera readiness and ask a visual question without any other connection controls.
+2. Tap **Stop RayBridge** while listening or while an answer is pending/being spoken. Confirm the camera and audio stop, then Start again and ask another question.
+3. Tap Stop during startup. Confirm it stays stopped after any outstanding permission dialog or SDK callback completes.
+4. With the Mac unavailable, verify startup reports the connection error and allows a fresh Start after the Mac is available.
+5. Open **Setup** while stopped and confirm pairing and registration are retained.

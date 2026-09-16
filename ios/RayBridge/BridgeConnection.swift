@@ -53,6 +53,7 @@ final class BridgeConnection {
             do {
                 while !Task.isCancelled {
                     let message = try await socket.receive()
+                    guard !Task.isCancelled, self?.socket === socket else { return }
                     let data: Data
                     switch message { case .string(let text): data = Data(text.utf8)
                     case .data(let bytes): data = bytes

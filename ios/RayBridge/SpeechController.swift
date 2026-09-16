@@ -17,6 +17,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
     private var listening = false
     private var generation = 0
     private var transcript = ""
+    private var spokenUtterance: AVSpeechUtterance?
     var allowPhoneAudio = false
     var isSpeaking: Bool { synthesizer.isSpeaking }
 
@@ -26,10 +27,12 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
         let speech = await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
         }
+        try Task.checkCancellation()
         guard speech == .authorized else { throw BridgeError.message("Allow speech recognition in iPhone Settings for RayBridge.") }
         guard await AVAudioApplication.requestRecordPermission() else {
             throw BridgeError.message("Allow microphone access in iPhone Settings for RayBridge.")
         }
+        try Task.checkCancellation()
     }
     private func audioSession() throws {
         let session = AVAudioSession.sharedInstance()
@@ -83,7 +86,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
                         }
                     }
                 }
-                if failure != nil { self.stopListening(); self.onError?("Speech recognition stopped. Tap Start listening to try again.") }
+                if failure != nil { self.stopListening(); self.onError?("Speech recognition stopped. Tap Start RayBridge to try again.") }
             }
         }
         do { engine.prepare(); try engine.start() }
@@ -118,13 +121,19 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        spokenUtterance = utterance
         synthesizer.speak(utterance)
     }
     func stop() {
+        spokenUtterance = nil
         stopListening(); synthesizer.stopSpeaking(at: .immediate)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.onFinishedSpeaking?() }
+        Task { @MainActor in
+            guard self.spokenUtterance === utterance else { return }
+            self.spokenUtterance = nil
+            self.onFinishedSpeaking?()
+        }
     }
 }
