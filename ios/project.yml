@@ -29,3 +29,17 @@ targets:
         CODE_SIGN_STYLE: Automatic
         MARKETING_VERSION: 0.1.0
         CURRENT_PROJECT_VERSION: 1
+schemes:
+  RayBridge:
+    build:
+      targets:
+        RayBridge: all
+    run:
+      config: Debug
+  RayBridge Device Logs:
+    build:
+      targets:
+        RayBridge: all
+    run:
+      config: Debug
+      debugEnabled: false

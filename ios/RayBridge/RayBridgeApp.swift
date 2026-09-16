@@ -4,13 +4,17 @@ import SwiftUI
 struct RayBridgeApp: App {
     @StateObject private var model = AppModel()
     @Environment(\.scenePhase) private var scenePhase
+    init() {
+        RayBridgeDiagnostics.event("App entry point reached")
+    }
     var body: some Scene {
         WindowGroup {
             ContentView(model: model)
+                .onAppear { RayBridgeDiagnostics.event("Main screen appeared") }
                 .onOpenURL { model.handle($0) }
                 .onChange(of: scenePhase) { _, phase in
                     // Allow Meta AI registration handoffs; suspend active conversations on backgrounding.
-                    if phase == .background && (model.running || model.cameraActive) { model.suspend() }
+                    if phase == .background { model.background() }
                 }
         }
     }
@@ -36,10 +40,11 @@ struct ContentView: View {
                     if let error = model.error { Text(error).foregroundStyle(.red).accessibilityLabel("Error: \(error)") }
                     GroupBox("Glasses") {
                         VStack(alignment: .leading, spacing: 14) {
+                            if !model.registrationStatus.isEmpty { Text(model.registrationStatus) }
                             Text(model.cameraStatus)
                             Button("Register with Meta AI") { model.registerGlasses() }
-                            Button(model.cameraActive || model.cameraStarting ? "Stop glasses camera" : "Connect glasses camera") { model.toggleCamera() }.disabled(model.cameraStopping)
-                            Text("The camera is sampled when you ask a question.").font(.footnote)
+                            Button(model.cameraRequested ? "Stop glasses camera" : "Connect glasses camera") { model.toggleCamera() }.disabled(model.cameraStopping)
+                            Text("Connect the camera and wait for “Glasses camera connected.” Then ask a question to send the latest image to your Mac.").font(.footnote)
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
                     }
                     GroupBox("Your Mac") {

@@ -42,14 +42,34 @@ The checked-in Xcode project is `ios/RayBridge.xcodeproj`. It requires iOS 18+, 
 2. Install Meta AI on the iPhone and pair the glasses there. Enable **Developer Mode** for the glasses. The included `MWDAT.MetaAppID = 0` is for that developer flow. For a release-channel build, replace the Meta app ID/client token and configure the project in Meta's developer console; do not ship the placeholder values. See [Meta registration documentation](https://github.com/facebook/meta-wearables-dat-ios/blob/main/plugins/mwdat-ios/skills/permissions-registration/SKILL.md).
 3. Select the physical iPhone in Xcode and Run. Complete iPhone development trust/setup if prompted.
 4. Scan the Mac pairing QR with the iPhone Camera. RayBridge opens with the link filled in; select **Pair Mac**. Alternatively, copy the link into RayBridge's pairing field. The token is stored in the iPhone Keychain.
-5. Select **Register with Meta AI**, complete registration, then select **Connect glasses camera**. Grant camera access in Meta AI.
+5. Select **Register with Meta AI**, complete registration, then select **Connect glasses camera**. Grant camera access in Meta AI. Wait for **Glasses camera connected**, which is shown only after a usable image arrives. The app announces that first image through VoiceOver when enabled, or its speech output otherwise. No spoken command is needed to start camera capture.
 6. Ensure glasses audio is connected in iOS Bluetooth. Select **Start listening** and grant microphone/speech permissions. Ask a question, pause, and wait for the spoken answer.
 
 English (US) **on-device** speech recognition is required for the voice prototype. If it is unavailable, typed questions still work. **Use iPhone audio for testing** explicitly allows phone audio when glasses are unavailable. Default operation requires a Bluetooth headset route. Bluetooth routing, SDK streaming, and speech recognition cannot be considered validated by a successful simulator build.
 
 The large **Stop** control stops listening, speech, and a pending model answer. The separate **Stop glasses camera** control stops the camera. Backgrounding during an active conversation/camera stream pauses the session; reconnect when returning. Background operation and a locked-phone experience are not implemented.
 
-If editing `ios/project.yml`, regenerate the project with `xcodegen generate --spec ios/project.yml`.
+If camera startup fails, the camera panel retains the error even when you reconnect the Mac or restart listening. Registration and camera permission do not by themselves confirm a camera connection. RayBridge waits for asynchronous device selection before creating a session; discovery and compatibility failures now have specific messages. The Xcode marker `First glasses camera image received` confirms actual image delivery. A successful build alone does not validate the physical glasses connection.
+
+If editing `ios/project.yml`, regenerate the project with `xcodegen generate --spec ios/project.yml`. Preserve your local development-team setting when regenerating; select your signing team again if it is reset.
+
+## Xcode launch stalls and device logs
+
+If Xcode reports that `libobjc.A.dylib` is being read from process memory and the app only opens after stopping the debugger, select the **RayBridge Device Logs** scheme beside the Run button, select your iPhone, and Run. This scheme uses a Debug build and captures console output without attaching LLDB. The normal **RayBridge** scheme still supports breakpoint debugging.
+
+The app logs fixed lifecycle messages to the Xcode console and Apple's unified logging system (`org.raybridge.ios`, category `lifecycle`). A successful launch includes `App entry point reached`, `App model initialization finished`, and `Main screen appeared`. Questions, answers, camera images, and pairing credentials are not logged. Debug builds also write the markers to standard output for the terminal fallback below, so Xcode may show each marker twice.
+
+On the development iPhone, the stalled debugger required Xcode to kill its LLDB RPC server. The Device Logs scheme then successfully reached the main screen and delivered logs to Xcode. This is a verified workaround for debugger startup, not a repair of LLDB's missing shared-cache data. Stopping a run ends its console session.
+
+For normal debugging, connect the unlocked iPhone by USB, open **Window → Devices and Simulators**, and let Xcode finish preparing device/debugger support before retrying the normal scheme. Apple describes the warning and USB-versus-network diagnosis in [this developer support discussion](https://developer.apple.com/forums/thread/800067). Do not disable iPhone Wi-Fi; the app still needs it to reach the Mac bridge.
+
+If Xcode's console is unavailable, stop its run and use the installed app with:
+
+```sh
+scripts/iphone-console.command "Your iPhone name"
+```
+
+This launches without LLDB and streams Debug-build stdout to the terminal. To view unified logs independently, open macOS Console, select the connected iPhone, start streaming, and filter for the RayBridge process/subsystem.
 
 ## Data and connection behavior
 

@@ -18,6 +18,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
     private var generation = 0
     private var transcript = ""
     var allowPhoneAudio = false
+    var isSpeaking: Bool { synthesizer.isSpeaking }
 
     override init() { super.init(); synthesizer.delegate = self }
 
