@@ -93,6 +93,14 @@ struct SetupView: View {
                         .disabled(model.sessionActive || model.registeringGlasses || !model.registrationStatus.isEmpty)
                     Text("Pair your glasses in Meta AI, enable Developer Mode, and complete any installation it offers. Camera permission is requested when you first start RayBridge.")
                 }
+                Section("Camera images") {
+                    Toggle("Send camera image with every question", isOn: $model.alwaysSendCameraImage)
+                        .disabled(model.sessionActive)
+                        .accessibilityHint("When off, RayBridge sends an image only when your question appears to ask about your surroundings. Say use the camera to always include one.")
+                    Text(model.alwaysSendCameraImage
+                         ? "Every question includes a current image from the glasses camera."
+                         : "RayBridge sends an image only for questions that appear visual. Say “use the camera” to always include one.")
+                }
                 Section("Testing") {
                     Toggle("Use iPhone audio for testing", isOn: $model.phoneAudio)
                         .disabled(model.sessionActive)

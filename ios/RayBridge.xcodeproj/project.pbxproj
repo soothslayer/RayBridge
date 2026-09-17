@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		6F24B7809E094535AB590101 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6F24B7809E094535AB590102 /* Assets.xcassets */; };
 		1A55FA0190C34781943A7311 /* SessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A55FA0190C34781943A7312 /* SessionController.swift */; };
+		2B66AB01A1C45881B21F5101 /* CameraImagePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B66AB01A1C45881B21F5102 /* CameraImagePolicy.swift */; };
 		23F6D9EFBB273E66A6FB6672 /* RayBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C5EE867F5E3F8654E9009D1 /* RayBridgeApp.swift */; };
 		467447855039BD64DBF629C3 /* BridgeConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40A63ED8D2E23052DFA68090 /* BridgeConnection.swift */; };
 		580D4F80DDE71E3F81D1175F /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 955DB17DA6A3D4AD29CAC310 /* AppModel.swift */; };
@@ -23,6 +24,7 @@
 		6F24B7809E094535AB590102 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		0C5EE867F5E3F8654E9009D1 /* RayBridgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RayBridgeApp.swift; sourceTree = "<group>"; };
 		1A55FA0190C34781943A7312 /* SessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionController.swift; sourceTree = "<group>"; };
+		2B66AB01A1C45881B21F5102 /* CameraImagePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraImagePolicy.swift; sourceTree = "<group>"; };
 		40A63ED8D2E23052DFA68090 /* BridgeConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeConnection.swift; sourceTree = "<group>"; };
 		416AB305A59A692B92AFD3D8 /* SpeechController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechController.swift; sourceTree = "<group>"; };
 		607F3F3DD11823BC3C65DB43 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
@@ -73,6 +75,7 @@
 				0C5EE867F5E3F8654E9009D1 /* RayBridgeApp.swift */,
 				416AB305A59A692B92AFD3D8 /* SpeechController.swift */,
 				1A55FA0190C34781943A7312 /* SessionController.swift */,
+				2B66AB01A1C45881B21F5102 /* CameraImagePolicy.swift */,
 			);
 			path = RayBridge;
 			sourceTree = "<group>";
@@ -160,6 +163,7 @@
 				23F6D9EFBB273E66A6FB6672 /* RayBridgeApp.swift in Sources */,
 				CB5356CB1B67442BD400F176 /* SpeechController.swift in Sources */,
 				1A55FA0190C34781943A7311 /* SessionController.swift in Sources */,
+				2B66AB01A1C45881B21F5101 /* CameraImagePolicy.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -4,6 +4,8 @@ import UIKit
 import OSLog
 import Darwin
 
+private let cameraImagePreferenceKey = "alwaysSendCameraImage"
+
 // Accept only static messages so transcripts, camera data, and pairing credentials
 // cannot accidentally be passed to the persistent device log.
 enum RayBridgeDiagnostics {
@@ -38,6 +40,9 @@ final class AppModel: ObservableObject {
     @Published var pairingText = ""
     @Published var typedQuestion = ""
     @Published var phoneAudio = false
+    @Published var alwaysSendCameraImage: Bool = UserDefaults.standard.object(forKey: cameraImagePreferenceKey) as? Bool ?? true {
+        didSet { UserDefaults.standard.set(alwaysSendCameraImage, forKey: cameraImagePreferenceKey) }
+    }
     @Published var pairedHost: String? = Pairing.load()?.host
     private let connection = BridgeConnection()
     private let camera = GlassesCamera()
@@ -260,7 +265,8 @@ final class AppModel: ObservableObject {
         Task {
             do {
                 guard current == activity, running else { return }
-                if let frame, Date().timeIntervalSince(frame.date) < 2.5 {
+                let shouldSendImage = CameraImagePolicy.shouldSendImage(for: text, alwaysSend: alwaysSendCameraImage)
+                if shouldSendImage, let frame, Date().timeIntervalSince(frame.date) < 2.5 {
                     try await connection.send(["type": "frame", "jpeg": frame.data.base64EncodedString()])
                 } else { try await connection.send(["type": "camera.off"]) }
                 guard current == activity else { return }
