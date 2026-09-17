@@ -197,7 +197,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         stopThinkingHeartbeat()
         try audioSession()
         let player = try AVAudioPlayer(data: Self.thinkingHeartbeat)
-        player.volume = 0.65
+        player.volume = 0.35
         player.numberOfLoops = -1
         player.prepareToPlay()
         heartbeatPlayer = player
@@ -310,7 +310,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     // and the soft double pulse repeats while Codex is working.
     private static let listeningCue = twoNoteCue(first: 660, second: 880)
     private static let stoppedListeningCue = twoNoteCue(first: 880, second: 660)
-    private static let thinkingHeartbeat = makeWave(duration: 1.2) { _, time in
+    private static let thinkingHeartbeat = makeWave(duration: 2.5) { _, time in
         func pulse(start: Double, duration: Double, frequency: Double) -> Double {
             let local = time - start
             guard local >= 0, local < duration else { return 0 }
