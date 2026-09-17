@@ -101,11 +101,25 @@ struct SetupView: View {
                          ? "Every question includes a current image from the glasses camera."
                          : "RayBridge sends an image only for questions that appear visual. Say “use the camera” to always include one.")
                 }
+                Section("Answer voice") {
+                    Picker("Voice", selection: $model.speechVoiceIdentifier) {
+                        ForEach(model.speechVoices) { voice in
+                            Text(voice.displayName).tag(voice.id)
+                        }
+                    }
+                    .disabled(model.sessionActive || model.speechVoices.isEmpty)
+                    .accessibilityHint("Selects the voice used for Codex answers and RayBridge announcements.")
+                    Button("Preview selected voice") { model.previewSpeechVoice() }
+                        .disabled(model.sessionActive || model.speechVoiceIdentifier.isEmpty)
+                        .accessibilityHint("Plays a short sample through connected glasses, or through the iPhone when glasses audio is unavailable.")
+                    Text("Premium and enhanced U.S. English voices appear first when installed. Additional voices are managed in iPhone Accessibility settings. Reopen Setup after downloading a voice.")
+                }
                 Section("Testing") {
                     Toggle("Use iPhone audio for testing", isOn: $model.phoneAudio)
                         .disabled(model.sessionActive)
                 }
             }
+            .onAppear { model.refreshSpeechVoices() }
             .navigationTitle("Setup").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

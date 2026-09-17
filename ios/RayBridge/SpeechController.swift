@@ -1,6 +1,15 @@
 import AVFoundation
 import Speech
 
+struct SpeechVoiceOption: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let languageName: String
+    let qualityName: String
+
+    var displayName: String { "\(name), \(qualityName), \(languageName)" }
+}
+
 @MainActor
 final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     var onQuestion: ((String) -> Void)?
@@ -24,9 +33,62 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     private var cueAction: CueAction?
     private var heartbeatPlayer: AVAudioPlayer?
     var allowPhoneAudio = false
+    var voiceIdentifier: String?
     var isSpeaking: Bool { synthesizer.isSpeaking }
 
     override init() { super.init(); synthesizer.delegate = self }
+
+    func availableVoiceOptions() -> [SpeechVoiceOption] {
+        Self.englishVoices.map { voice in
+            SpeechVoiceOption(
+                id: voice.identifier,
+                name: voice.name,
+                languageName: Locale.current.localizedString(forIdentifier: voice.language) ?? voice.language,
+                qualityName: Self.qualityName(voice.quality)
+            )
+        }
+    }
+
+    func preferredVoiceIdentifier(savedIdentifier: String?) -> String? {
+        let voices = Self.englishVoices
+        if let savedIdentifier, voices.contains(where: { $0.identifier == savedIdentifier }) {
+            return savedIdentifier
+        }
+        return voices.first(where: { $0.language == "en-US" })?.identifier
+            ?? AVSpeechSynthesisVoice(language: "en-US")?.identifier
+            ?? voices.first?.identifier
+    }
+
+    private static var englishVoices: [AVSpeechSynthesisVoice] {
+        AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language.hasPrefix("en-") }
+            .sorted { left, right in
+                let leftUS = left.language == "en-US" ? 1 : 0
+                let rightUS = right.language == "en-US" ? 1 : 0
+                if leftUS != rightUS { return leftUS > rightUS }
+                let leftQuality = qualityRank(left.quality)
+                let rightQuality = qualityRank(right.quality)
+                if leftQuality != rightQuality { return leftQuality > rightQuality }
+                if left.name != right.name { return left.name.localizedStandardCompare(right.name) == .orderedAscending }
+                return left.identifier < right.identifier
+            }
+    }
+
+    private static func qualityRank(_ quality: AVSpeechSynthesisVoiceQuality) -> Int {
+        switch quality {
+        case .premium: return 2
+        case .enhanced: return 1
+        default: return 0
+        }
+    }
+
+    private static func qualityName(_ quality: AVSpeechSynthesisVoiceQuality) -> String {
+        switch quality {
+        case .premium: return "Premium"
+        case .enhanced: return "Enhanced"
+        default: return "Standard"
+        }
+    }
 
     func permissions() async throws {
         let speech = await withCheckedContinuation { continuation in
@@ -148,12 +210,17 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         cancelCue()
         stopThinkingHeartbeat()
         stopListening()
+        if synthesizer.isSpeaking {
+            spokenUtterance = nil
+            synthesizer.stopSpeaking(at: .immediate)
+        }
         try audioSession()
         guard allowPhoneAudio || hasBluetoothRoute else {
             throw BridgeError.message("Glasses audio disconnected. The answer is available on screen.")
         }
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        utterance.voice = voiceIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:))
+            ?? AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         spokenUtterance = utterance
         synthesizer.speak(utterance)

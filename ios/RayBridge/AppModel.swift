@@ -5,6 +5,7 @@ import OSLog
 import Darwin
 
 private let cameraImagePreferenceKey = "alwaysSendCameraImage"
+private let speechVoicePreferenceKey = "speechVoiceIdentifier"
 
 // Accept only static messages so transcripts, camera data, and pairing credentials
 // cannot accidentally be passed to the persistent device log.
@@ -40,6 +41,13 @@ final class AppModel: ObservableObject {
     @Published var pairingText = ""
     @Published var typedQuestion = ""
     @Published var phoneAudio = false
+    @Published var speechVoiceIdentifier = "" {
+        didSet {
+            speech.voiceIdentifier = speechVoiceIdentifier
+            UserDefaults.standard.set(speechVoiceIdentifier, forKey: speechVoicePreferenceKey)
+        }
+    }
+    @Published private(set) var speechVoices: [SpeechVoiceOption] = []
     @Published var alwaysSendCameraImage: Bool = UserDefaults.standard.object(forKey: cameraImagePreferenceKey) as? Bool ?? true {
         didSet { UserDefaults.standard.set(alwaysSendCameraImage, forKey: cameraImagePreferenceKey) }
     }
@@ -80,6 +88,7 @@ final class AppModel: ObservableObject {
 
     init() {
         RayBridgeDiagnostics.event("App model initialization started")
+        refreshSpeechVoices()
         connection.onMessage = { [weak self] in self?.receive($0) }
         connection.onError = { [weak self] message in
             guard let self else { return }
@@ -148,6 +157,20 @@ final class AppModel: ObservableObject {
             }
         }
         RayBridgeDiagnostics.event("App model initialization finished")
+    }
+    func refreshSpeechVoices() {
+        speechVoices = speech.availableVoiceOptions()
+        let saved = UserDefaults.standard.string(forKey: speechVoicePreferenceKey)
+        speechVoiceIdentifier = speech.preferredVoiceIdentifier(savedIdentifier: saved) ?? ""
+        speech.voiceIdentifier = speechVoiceIdentifier
+    }
+    func previewSpeechVoice() {
+        guard !sessionActive else { return }
+        error = nil
+        speech.allowPhoneAudio = true
+        do { try speech.speak("Hello. I’m the RayBridge voice. I’ll read Codex answers to you.") }
+        catch { fail("The voice preview could not play. \(error.localizedDescription)") }
+        speech.allowPhoneAudio = phoneAudio
     }
     func fail(_ message: String) {
         RayBridgeDiagnostics.event("An error was presented in the app")
