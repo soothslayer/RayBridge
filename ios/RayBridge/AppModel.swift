@@ -116,6 +116,7 @@ final class AppModel: ObservableObject {
         session.onError = { [weak self] error in self?.fail(error.localizedDescription) }
         speech.onQuestion = { [weak self] text in self?.ask(text) }
         speech.onTranscript = { [weak self] in self?.transcript = $0 }
+        speech.onStartedListening = { [weak self] in self?.status = "Listening" }
         speech.onError = { [weak self] message in
             guard let self, self.running else { return }
             self.stop(); self.fail(message)
@@ -196,17 +197,15 @@ final class AppModel: ObservableObject {
     private func announceCameraIfReady() {
         guard running, pendingCameraAnnouncement, cameraActive, !busy, !speech.isSpeaking else { return }
         pendingCameraAnnouncement = false
-        if UIAccessibility.isVoiceOverRunning {
-            UIAccessibility.post(notification: .announcement, argument: "Glasses camera connected")
-        } else {
-            do {
-                speech.allowPhoneAudio = phoneAudio
-                try speech.speak("Glasses camera connected")
-            } catch {
-                RayBridgeDiagnostics.event("Camera connected, but audio confirmation could not play")
-                self.error = "Camera connected, but audio confirmation could not play. Check glasses Bluetooth audio."
-                resumeListening()
-            }
+        do {
+            // SpeechController pauses recognition while this plays, preventing
+            // the ready cue from becoming the user's first question.
+            speech.allowPhoneAudio = phoneAudio
+            try speech.speak("Glasses camera connected. Listening.")
+        } catch {
+            RayBridgeDiagnostics.event("Camera connected, but audio confirmation could not play")
+            self.error = "Camera connected, but audio confirmation could not play. Check glasses Bluetooth audio."
+            resumeListening()
         }
     }
     private func sessionChanged(_ phase: SessionController.Phase) {
@@ -251,6 +250,12 @@ final class AppModel: ObservableObject {
         guard running, connected, !busy, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         RayBridgeDiagnostics.event("Question submitted to Mac")
         speech.stop(); busy = true; transcript = text; error = nil; status = "Asking ChatGPT…"
+        do {
+            speech.allowPhoneAudio = phoneAudio
+            try speech.startThinkingHeartbeat()
+        } catch {
+            RayBridgeDiagnostics.event("Thinking heartbeat could not play")
+        }
         let current = activity
         Task {
             do {
@@ -271,7 +276,8 @@ final class AppModel: ObservableObject {
     }
     private func resumeListening() {
         guard running, connected else { return }
-        do { try speech.startListening(); status = "Listening" }
+        status = "Preparing to listen…"
+        do { try speech.startListeningWithCue() }
         catch { stop(); fail(error.localizedDescription) }
     }
     private func receive(_ message: [String: Any]) {

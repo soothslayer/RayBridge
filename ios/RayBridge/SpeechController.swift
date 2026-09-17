@@ -2,11 +2,12 @@ import AVFoundation
 import Speech
 
 @MainActor
-final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
+final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     var onQuestion: ((String) -> Void)?
     var onTranscript: ((String) -> Void)?
     var onError: ((String) -> Void)?
     var onFinishedSpeaking: (() -> Void)?
+    var onStartedListening: (() -> Void)?
     private let engine = AVAudioEngine()
     private let synthesizer = AVSpeechSynthesizer()
     private var recognition: SFSpeechRecognitionTask?
@@ -18,6 +19,10 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
     private var generation = 0
     private var transcript = ""
     private var spokenUtterance: AVSpeechUtterance?
+    private enum CueAction { case startListening, submit(String) }
+    private var cuePlayer: AVAudioPlayer?
+    private var cueAction: CueAction?
+    private var heartbeatPlayer: AVAudioPlayer?
     var allowPhoneAudio = false
     var isSpeaking: Bool { synthesizer.isSpeaking }
 
@@ -48,6 +53,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
         AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .bluetoothHFP || $0.portType == .bluetoothA2DP }
     }
     func startListening() throws {
+        cancelCue()
         stopListening()
         try audioSession()
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")), recognizer.isAvailable,
@@ -103,7 +109,13 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
     private func submit() {
         guard listening, !transcript.isEmpty else { return }
         let text = transcript
-        stopListening(); onQuestion?(text)
+        stopListening()
+        do {
+            try playCue(Self.stoppedListeningCue, action: .submit(text))
+        } catch {
+            // The question should still be submitted if the optional cue cannot play.
+            onQuestion?(text)
+        }
     }
     func stopListening() {
         listening = false; generation += 1
@@ -112,7 +124,29 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
         if tapped { engine.inputNode.removeTap(onBus: 0); tapped = false }
         request?.endAudio(); recognition?.cancel(); recognition = nil; request = nil
     }
+    func startListeningWithCue() throws {
+        stopThinkingHeartbeat()
+        cancelCue()
+        stopListening()
+        try playCue(Self.listeningCue, action: .startListening)
+    }
+    func startThinkingHeartbeat() throws {
+        stopThinkingHeartbeat()
+        try audioSession()
+        let player = try AVAudioPlayer(data: Self.thinkingHeartbeat)
+        player.volume = 0.65
+        player.numberOfLoops = -1
+        player.prepareToPlay()
+        heartbeatPlayer = player
+        if !player.play() { heartbeatPlayer = nil }
+    }
+    func stopThinkingHeartbeat() {
+        heartbeatPlayer?.stop()
+        heartbeatPlayer = nil
+    }
     func speak(_ text: String) throws {
+        cancelCue()
+        stopThinkingHeartbeat()
         stopListening()
         try audioSession()
         guard allowPhoneAudio || hasBluetoothRoute else {
@@ -126,8 +160,43 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
     }
     func stop() {
         spokenUtterance = nil
+        cancelCue()
+        stopThinkingHeartbeat()
         stopListening(); synthesizer.stopSpeaking(at: .immediate)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+    private func playCue(_ data: Data, action: CueAction) throws {
+        try audioSession()
+        let player = try AVAudioPlayer(data: data)
+        player.delegate = self
+        player.volume = 0.8
+        player.prepareToPlay()
+        cueAction = action
+        cuePlayer = player
+        if !player.play() { finishCue() }
+    }
+    private func finishCue() {
+        let action = cueAction
+        cueAction = nil
+        cuePlayer = nil
+        switch action {
+        case .startListening:
+            do { try startListening(); onStartedListening?() }
+            catch { onError?(error.localizedDescription) }
+        case .submit(let question): onQuestion?(question)
+        case nil: break
+        }
+    }
+    private func cancelCue() {
+        cueAction = nil
+        cuePlayer?.stop()
+        cuePlayer = nil
+    }
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in
+            guard self.cuePlayer === player else { return }
+            self.finishCue()
+        }
     }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
@@ -135,5 +204,67 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
             self.spokenUtterance = nil
             self.onFinishedSpeaking?()
         }
+    }
+
+    // Generate cues in memory so they cannot go missing from an archive. The
+    // rising pair means listening, the falling pair means listening stopped,
+    // and the soft double pulse repeats while Codex is working.
+    private static let listeningCue = twoNoteCue(first: 660, second: 880)
+    private static let stoppedListeningCue = twoNoteCue(first: 880, second: 660)
+    private static let thinkingHeartbeat = makeWave(duration: 1.2) { _, time in
+        func pulse(start: Double, duration: Double, frequency: Double) -> Double {
+            let local = time - start
+            guard local >= 0, local < duration else { return 0 }
+            let envelope = sin(.pi * local / duration)
+            return 0.22 * envelope * sin(2 * .pi * frequency * local)
+        }
+        return pulse(start: 0, duration: 0.075, frequency: 330) +
+            pulse(start: 0.13, duration: 0.09, frequency: 260)
+    }
+    private static func twoNoteCue(first: Double, second: Double) -> Data {
+        var phase = 0.0
+        return makeWave(duration: 0.18) { frame, time in
+            let progress = time / 0.18
+            let frequency = progress < 0.5 ? first : second
+            phase += 2.0 * .pi * frequency / 44_100.0
+            let attack = min(1.0, Double(frame) / 180.0)
+            let frameCount = Int(44_100.0 * 0.18)
+            let release = min(1.0, Double(frameCount - frame) / 900.0)
+            return 0.32 * min(attack, release) * sin(phase)
+        }
+    }
+    private static func makeWave(duration: Double, sample: (Int, Double) -> Double) -> Data {
+        let sampleRate: UInt32 = 44_100
+        let frameCount = Int(Double(sampleRate) * duration)
+        var samples = Data(capacity: frameCount * 2)
+        for frame in 0..<frameCount {
+            let time = Double(frame) / Double(sampleRate)
+            let value = Int16(Double(Int16.max) * max(-1, min(1, sample(frame, time))))
+            append(UInt16(bitPattern: value), to: &samples)
+        }
+
+        var wave = Data()
+        wave.append(contentsOf: "RIFF".utf8)
+        append(UInt32(36 + samples.count), to: &wave)
+        wave.append(contentsOf: "WAVEfmt ".utf8)
+        append(UInt32(16), to: &wave)           // PCM format chunk length
+        append(UInt16(1), to: &wave)            // Linear PCM
+        append(UInt16(1), to: &wave)            // Mono
+        append(sampleRate, to: &wave)
+        append(sampleRate * 2, to: &wave)        // Bytes per second
+        append(UInt16(2), to: &wave)             // Bytes per frame
+        append(UInt16(16), to: &wave)            // Bits per sample
+        wave.append(contentsOf: "data".utf8)
+        append(UInt32(samples.count), to: &wave)
+        wave.append(samples)
+        return wave
+    }
+    private static func append(_ value: UInt16, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+    }
+    private static func append(_ value: UInt32, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
     }
 }
