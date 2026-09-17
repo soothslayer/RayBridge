@@ -8,6 +8,7 @@ private let cameraImagePreferenceKey = "alwaysSendCameraImage"
 private let speechVoicePreferenceKey = "speechVoiceIdentifier"
 private let answerVoiceEnginePreferenceKey = "answerVoiceEngine"
 private let kokoroVoicePreferenceKey = "kokoroVoiceIdentifier"
+private let thinkingHeartbeatPreferenceKey = "thinkingHeartbeatEnabled"
 
 enum AnswerVoiceEngine: String, CaseIterable, Identifiable {
     case apple
@@ -87,6 +88,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var speechVoices: [SpeechVoiceOption] = []
     @Published var alwaysSendCameraImage: Bool = UserDefaults.standard.object(forKey: cameraImagePreferenceKey) as? Bool ?? true {
         didSet { UserDefaults.standard.set(alwaysSendCameraImage, forKey: cameraImagePreferenceKey) }
+    }
+    @Published var thinkingHeartbeatEnabled: Bool = UserDefaults.standard.object(forKey: thinkingHeartbeatPreferenceKey) as? Bool ?? true {
+        didSet { UserDefaults.standard.set(thinkingHeartbeatEnabled, forKey: thinkingHeartbeatPreferenceKey) }
     }
     @Published var pairedHost: String? = Pairing.load()?.host
     private let connection = BridgeConnection()
@@ -315,11 +319,13 @@ final class AppModel: ObservableObject {
         guard running, connected, !busy, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         RayBridgeDiagnostics.event("Question submitted to Mac")
         speech.stop(); busy = true; transcript = text; error = nil; status = "Asking ChatGPT…"
-        do {
-            speech.allowPhoneAudio = phoneAudio
-            try speech.startThinkingHeartbeat()
-        } catch {
-            RayBridgeDiagnostics.event("Thinking heartbeat could not play")
+        if thinkingHeartbeatEnabled {
+            do {
+                speech.allowPhoneAudio = phoneAudio
+                try speech.startThinkingHeartbeat()
+            } catch {
+                RayBridgeDiagnostics.event("Thinking heartbeat could not play")
+            }
         }
         let current = activity
         Task {

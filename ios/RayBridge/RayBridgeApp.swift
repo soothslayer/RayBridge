@@ -101,6 +101,14 @@ struct SetupView: View {
                          ? "Every question includes a current image from the glasses camera."
                          : "RayBridge sends an image only for questions that appear visual. Say “use the camera” to always include one.")
                 }
+                Section("Sound cues") {
+                    Toggle("Play heartbeat while Codex is thinking", isOn: $model.thinkingHeartbeatEnabled)
+                        .disabled(model.sessionActive)
+                        .accessibilityHint("When on, a soft repeating heartbeat plays after your question until the answer is ready.")
+                    Text(model.thinkingHeartbeatEnabled
+                         ? "The listening chimes and thinking heartbeat are enabled."
+                         : "Listening chimes remain enabled, but the thinking heartbeat is off.")
+                }
                 Section("Answer voice") {
                     Picker("Voice system", selection: $model.answerVoiceEngine) {
                         ForEach(AnswerVoiceEngine.allCases) { engine in
