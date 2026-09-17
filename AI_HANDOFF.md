@@ -1,6 +1,14 @@
 # RayBridge handoff
 
-Updated September 16, 2026, after successful physical-glasses testing on main.
+Updated September 17, 2026.
+
+## Active: reuse this Mac's Codex login
+
+- Branch `feat/use-local-codex-login` adds an alternative to RayBridge's separate browser login.
+- **Use this Mac’s Codex login** opens a new restricted stdio app-server but leaves `CODEX_HOME` at the machine's normal setting, allowing Codex to reuse the CLI/desktop/IDE cached ChatGPT login. It selects the newest working executable found in ChatGPT.app, Codex.app, common CLI locations, or the bundle; `RAYBRIDGE_LOCAL_CODEX` can force one. It does not attach to an arbitrary interactive process, copy tokens, share conversations, or expose logout for the shared account.
+- Both account sources force the OpenAI provider, clear configured MCP servers, disable tool-related features and network access, retain read-only permissions, require `account/read` type `chatgpt`, and use ephemeral threads.
+- The selected source persists in `~/Library/Application Support/RayBridge/codex-account-source`; switching disconnects the phone and restarts only RayBridge's app-server child.
+- Unit/server tests cover launch isolation, restrictions, executable candidates, source switching, persistence, invalid input, and shared-account logout protection. The bundled CLI 0.146.0 could read the shared account but could not run the configured `gpt-6-astra`; automatic selection found ChatGPT.app's 0.154.0-alpha.6.2 runtime, and a live local turn then passed without a new login.
 
 ## TestFlight packaging fix on main
 

@@ -2,7 +2,7 @@
 
 The physical-device checks below have **not** been completed. Mac ChatGPT Plus sign-in and a controlled image inference test passed (the model answered “Blue 7” for a generated blue rectangle containing a white 7). That does not establish an end-to-end working glasses assistant.
 
-1. Sign in on the Mac with an eligible ChatGPT subscription. Verify status changes to connected; sign out and confirm the app disconnects the phone. Confirm inference never requests an API key.
+1. Test both account sources on the Mac with an eligible ChatGPT subscription. For the separate RayBridge account, verify sign-in, sign-out, and phone disconnection. For **Use this Mac’s Codex login**, first verify `codex` is signed in, select the option, confirm the plan appears without another browser flow, and confirm RayBridge does not offer to sign the shared account out. Switch back and confirm the choice persists across app restarts. Confirm inference never requests an API key.
 2. Build and install on the intended iPhone, register the intended glasses through Meta AI, and obtain a real camera frame. Record the iPhone, iOS, glasses model, glasses firmware, Meta AI version, and account plan.
 3. Pair using both QR and pasted-link flows. Check macOS/iOS local-network permission behavior. Confirm only the pinned certificate is accepted, a replaced pairing token rejects the old pairing, and the setup page is unreachable from another device.
 4. With phone audio testing enabled, ask a typed nonvisual question. Then ask about a simple high-contrast object or printed label visible in the glasses camera. Verify the signed-in Codex model accepts the frame and returns a useful answer.

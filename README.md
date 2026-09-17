@@ -18,7 +18,7 @@ The local build is at `build/RayBridge.app`. Double-click it, or run:
 open build/RayBridge.app
 ```
 
-1. Choose **Sign in with ChatGPT** and complete the official browser flow using your friend's account.
+1. If Codex is already signed in on this Mac, choose **Use this Mac’s Codex login**. Otherwise choose **Sign in with ChatGPT** and complete the separate RayBridge browser flow using your friend's account.
 2. Keep the Mac and iPhone on the same private Wi-Fi network.
 3. Leave RayBridge running and keep the Mac awake.
 4. Pair the iPhone app using the QR code or pairing link.
@@ -91,7 +91,7 @@ These checks cover the validation failures reported for build 1; they do not rep
 - One phone can connect at a time. **Disconnect and replace pairing link** revokes the old token and disconnects the phone. Re-pair if the Mac's address or certificate changes. IPv4 private LAN addresses are supported; Bonjour discovery and IPv6 are not implemented.
 - Meta streams camera frames to the iPhone. The app samples up to one JPEG per second locally and retains the most recent one in memory. A question sends that frame to the Mac only if it is recent. The Mac keeps one frame and rejects stale visual context. Idle streaming does not continuously submit model turns.
 - Audio is transcribed on the iPhone. Question text and an optional JPEG travel via the Mac to OpenAI through Codex. Text answers return to the iPhone and are spoken with Apple's speech synthesis.
-- Codex uses an app-specific profile under `~/Library/Application Support/RayBridge/codex`, separate from any existing Codex login. Tokens and the local TLS key live in the parent RayBridge directory. The app never copies browser cookies or reads your existing Codex credentials.
+- By default, Codex uses an app-specific profile under `~/Library/Application Support/RayBridge/codex`. **Use this Mac’s Codex login** instead starts a separate restricted app-server connection that lets Codex itself reuse the login in its normal credential store (`CODEX_HOME` or `~/.codex`). RayBridge chooses the newest working Codex executable installed with ChatGPT, Codex, or the CLI, then falls back to its bundled executable. Set `RAYBRIDGE_LOCAL_CODEX` to force a particular executable. RayBridge never reads or copies credentials, does not share a conversation with the Codex terminal/app, and cannot sign that shared account out. Both modes disable shell, file-writing, web, MCP, plugin, app, browser, computer-use, and multi-agent capabilities. The local TLS key remains in the RayBridge application-support directory.
 - Conversations request ephemeral mode. RayBridge does not create recordings or transcript files. This is not a promise of zero retention by the OS, SDK, Codex diagnostics, or OpenAI; their applicable policies still govern data handling.
 - The phone protocol cannot invoke arbitrary Codex methods. Shell, browser, plugin, and multi-agent features are disabled; unsolicited tool requests are rejected, and turns use restricted read-only access.
 

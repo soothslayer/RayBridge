@@ -8,9 +8,11 @@ import { WebSocket } from 'ws';
 import { startBridge, authorized } from '../server.mjs';
 
 class FakeCodex extends EventEmitter {
+  accountSource = 'raybridge';
   async start() {}
   stop() {}
-  async account() { return { signedIn: true, plan: 'plus' }; }
+  async account() { return { signedIn: true, plan: 'plus', accountSource: this.accountSource }; }
+  async setAccountSource(source) { this.accountSource = source; }
   async newThread() { return 'test-thread'; }
   async call() { return {}; }
   async ask(threadId) {
@@ -39,6 +41,7 @@ test('HTTPS bridge authenticates, isolates admin, and completes a phone question
   assert.ok(cert.fingerprint256);
   const status = await (await fetch(`${admin}/api/status`)).json();
   assert.equal(status.signedIn, true);
+  assert.equal(status.accountSource, 'raybridge');
   const badHostStatus = await new Promise((resolve, reject) => {
     http.get(`${admin}/api/status`, { headers: { Host: 'evil.example' } }, res => { res.resume(); resolve(res.statusCode); }).on('error', reject);
   });
@@ -62,4 +65,25 @@ test('HTTPS bridge authenticates, isolates admin, and completes a phone question
   assert.equal((await fetch(`${admin}/api/revoke`, { method: 'POST', headers: { 'X-RayBridge': 'local' } })).status, 200);
   await closed;
   assert.notEqual((await readFile(`${dataDir}/phone-token`, 'utf8')).trim(), token);
+});
+
+test('local Codex login can be selected without exposing logout', async t => {
+  const dataDir = await mkdtemp('/tmp/raybridge-source-test-');
+  const codex = new FakeCodex();
+  const bridge = await startBridge({ dataDir, adminPort: 0, phonePort: 0, codex });
+  t.after(async () => { await bridge.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const admin = `http://127.0.0.1:${bridge.admin.address().port}`;
+  const headers = { 'X-RayBridge': 'local', 'Content-Type': 'application/json' };
+  const changed = await fetch(`${admin}/api/account-source`, {
+    method: 'POST', headers, body: JSON.stringify({ source: 'local' })
+  });
+  assert.equal(changed.status, 200);
+  assert.equal((await changed.json()).accountSource, 'local');
+  assert.equal((await readFile(`${dataDir}/codex-account-source`, 'utf8')).trim(), 'local');
+  assert.equal((await fetch(`${admin}/api/logout`, { method: 'POST', headers: { 'X-RayBridge': 'local' } })).status, 400);
+  const status = await (await fetch(`${admin}/api/status`)).json();
+  assert.equal(status.accountSource, 'local');
+  assert.equal((await fetch(`${admin}/api/account-source`, {
+    method: 'POST', headers, body: JSON.stringify({ source: 'invalid' })
+  })).status, 400);
 });

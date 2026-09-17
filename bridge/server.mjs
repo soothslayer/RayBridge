@@ -8,13 +8,24 @@ import { execFileSync } from 'node:child_process';
 import { randomBytes, timingSafeEqual, X509Certificate } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import QRCode from 'qrcode';
-import { CodexClient } from './codex.mjs';
+import { CodexClient, accountSources } from './codex.mjs';
 import { PhoneSession } from './session.mjs';
 
 export function authorized(header, token) {
   const actual = Buffer.from(typeof header === 'string' ? header : '');
   const expected = Buffer.from(`Bearer ${token}`);
   return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+async function readJSON(req, maximum = 1024) {
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of req) {
+    length += chunk.length;
+    if (length > maximum) throw new Error('Request is too large.');
+    chunks.push(chunk);
+  }
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { throw new Error('Expected a JSON request.'); }
 }
 const root = path.dirname(fileURLToPath(import.meta.url));
 
@@ -38,7 +49,13 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
   try { token = (await readFile(tokenPath, 'utf8')).trim(); } catch { token = randomBytes(32).toString('hex'); }
   if (!/^[a-f0-9]{64}$/.test(token)) token = randomBytes(32).toString('hex');
   await writeFile(tokenPath, token, { mode: 0o600 });
-  const codex = suppliedCodex || new CodexClient(path.join(dataDir, 'codex'));
+  const sourcePath = path.join(dataDir, 'codex-account-source');
+  let accountSource = 'raybridge';
+  try {
+    const saved = (await readFile(sourcePath, 'utf8')).trim();
+    if (accountSources.has(saved)) accountSource = saved;
+  } catch {}
+  const codex = suppliedCodex || new CodexClient(path.join(dataDir, 'codex'), undefined, accountSource);
   let serviceError = null;
   codex.on('unavailable', error => { serviceError = error.message; for (const socket of wss.clients) socket.close(1011, 'ChatGPT connection stopped'); });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 700_000, perMessageDeflate: false });
@@ -103,7 +120,8 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
       if (req.method === 'GET' && req.url === '/api/status') {
         const account = serviceError ? { signedIn: false } : await codex.account();
         const hosts = Object.values(os.networkInterfaces()).flat().filter(x => x && x.family === 'IPv4' && !x.internal).map(x => x.address);
-        return sendJSON(res, 200, { ...account, error: serviceError, phoneConnected: wss.clients.size > 0, hosts, phonePort: phone.address().port, loginPending });
+        return sendJSON(res, 200, { ...account, accountSource: account.accountSource || codex.accountSource || accountSource,
+          error: serviceError, phoneConnected: wss.clients.size > 0, hosts, phonePort: phone.address().port, loginPending });
       }
       if (req.method === 'GET' && req.url?.startsWith('/api/pair?')) {
         const hostIP = new URL(req.url, ownOrigin).searchParams.get('host');
@@ -113,15 +131,34 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
         return sendJSON(res, 200, { link, qr: await QRCode.toDataURL(link, { width: 320, margin: 2 }) });
       }
       if (req.method === 'POST' && req.url === '/api/login') {
+        if ((codex.accountSource || accountSource) === 'local') {
+          throw new Error('RayBridge is using this Mac’s Codex login. Run codex login on this Mac, or switch to a separate RayBridge login.');
+        }
         if (loginPending) throw new Error('Sign-in is already open. Finish it in your browser.');
         const login = await codex.call('account/login/start', { type: 'chatgpt' });
         loginPending = true;
         return sendJSON(res, 200, { url: login.authUrl });
       }
       if (req.method === 'POST' && req.url === '/api/logout') {
+        if ((codex.accountSource || accountSource) === 'local') {
+          throw new Error('Switch to a separate RayBridge login before signing out.');
+        }
         for (const ws of wss.clients) ws.close(1000, 'Signed out on Mac');
         await codex.call('account/logout'); loginPending = false;
         return sendJSON(res, 200, { ok: true });
+      }
+      if (req.method === 'POST' && req.url === '/api/account-source') {
+        const { source } = await readJSON(req);
+        if (!accountSources.has(source)) throw new Error('Choose a valid Codex account source.');
+        if (typeof codex.setAccountSource !== 'function') throw new Error('This Codex connection cannot change account source.');
+        for (const ws of wss.clients) ws.close(1000, 'Codex account source changed');
+        serviceError = null; loginPending = false;
+        try { await codex.setAccountSource(source); }
+        catch (error) { serviceError = error.message; throw error; }
+        accountSource = source;
+        await writeFile(sourcePath, `${source}\n`, { mode: 0o600 });
+        const account = await codex.account();
+        return sendJSON(res, 200, { ...account, accountSource: source });
       }
       if (req.method === 'POST' && req.url === '/api/revoke') {
         token = randomBytes(32).toString('hex');
