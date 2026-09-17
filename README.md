@@ -21,7 +21,7 @@ open build/RayBridge.app
 1. Choose **Codex** or **Claude Code** from the Assistant menu. For Codex, choose **Use this Mac’s Codex login** or complete the separate RayBridge sign-in. For Claude Code, first run `claude auth login` in Terminal; RayBridge uses that existing login and Claude configuration.
 2. Keep the Mac and iPhone on the same private Wi-Fi network.
 3. Leave RayBridge running and keep the Mac awake.
-4. Pair the iPhone app using the QR code or pairing link.
+4. Pair the iPhone app using the QR code or pairing link. In the iPhone app's **Setup → Assistant** section, choose Codex or Claude Code before starting RayBridge. The choice is remembered and the Mac switches to it as the phone connects.
 
 For the optional Kokoro answer voice, select **Download Kokoro voice** in the Mac app. This downloads the quantized model once to RayBridge's Application Support folder. Then choose **Kokoro on Mac** and a voice in the iPhone app under **Setup → Answer voice**. Kokoro generation runs locally on the Mac; if it is unavailable or fails, the iPhone reads the answer with the selected Apple voice.
 

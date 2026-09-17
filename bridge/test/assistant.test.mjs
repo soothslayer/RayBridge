@@ -32,3 +32,15 @@ test('assistant router switches backends and only forwards the active backend', 
   assert.equal(await router.newThread(), 'claude-thread');
   await assert.rejects(router.setProvider('other'), /valid assistant/);
 });
+
+test('assistant router restores the previous backend when a switch fails', async () => {
+  const codex = new FakeAssistant('codex');
+  const claude = new FakeAssistant('claude');
+  claude.start = async () => { throw new Error('Claude failed to start.'); };
+  const router = new AssistantRouter({ codex, claude });
+  await router.start();
+  await assert.rejects(router.setProvider('claude'), /failed to start/);
+  assert.equal(router.provider, 'codex');
+  assert.equal(codex.starts, 2);
+  assert.equal(claude.stops, 1);
+});

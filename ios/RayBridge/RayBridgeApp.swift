@@ -55,7 +55,7 @@ struct ContentView: View {
                                 .accessibilityHint("Stops RayBridge and clears this conversation. Tap Start RayBridge to begin a new one.")
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
                     }
-                    Text("Early prototype. Uses your ChatGPT subscription through Codex. Answers take turns and may be delayed. Keep this app open and the Mac awake.").font(.footnote)
+                    Text("Early prototype. Uses the assistant selected in Setup. Answers take turns and may be delayed. Keep this app open and the Mac awake.").font(.footnote)
                 }.padding(22)
             }
             .background(Color(red: 0.97, green: 0.98, blue: 0.95))
@@ -97,6 +97,16 @@ struct SetupView: View {
                         .disabled(model.sessionActive || model.registeringGlasses || !model.registrationStatus.isEmpty)
                     Text("Pair your glasses in Meta AI, enable Developer Mode, and complete any installation it offers. Camera permission is requested when you first start RayBridge.")
                 }
+                Section("Assistant") {
+                    Picker("Assistant", selection: $model.assistantProvider) {
+                        ForEach(AssistantProvider.allCases) { provider in
+                            Text(provider.displayName).tag(provider)
+                        }
+                    }
+                    .disabled(model.sessionActive)
+                    .accessibilityHint("Selects which signed-in assistant on your paired Mac answers your questions.")
+                    Text("Both assistants run through their command-line tools on your Mac. Sign in to each one there once, then you can switch here before starting RayBridge.")
+                }
                 Section("Camera images") {
                     Toggle("Send camera image with every question", isOn: $model.alwaysSendCameraImage)
                         .disabled(model.sessionActive)
@@ -113,7 +123,7 @@ struct SetupView: View {
                         .disabled(model.sessionActive || !model.voiceCommandsEnabled)
                         .accessibilityHint("Keeps the microphone ready for the Start command while RayBridge is stopped and this app is open.")
                     Text("Voice commands work only while this app is open. Start begins a session. Stop ends it. Cancel interrupts the current request or answer. Mute lets the current turn finish but ignores everything except Unmute. Standby keeps the microphone active while stopped so Start remains hands-free.")
-                    Toggle("Play heartbeat while Codex is thinking", isOn: $model.thinkingHeartbeatEnabled)
+                    Toggle("Play heartbeat while the assistant is thinking", isOn: $model.thinkingHeartbeatEnabled)
                         .disabled(model.sessionActive)
                         .accessibilityHint("When on, a soft repeating heartbeat plays after your question until the answer is ready.")
                     Text(model.thinkingHeartbeatEnabled
@@ -127,7 +137,7 @@ struct SetupView: View {
                         }
                     }
                     .disabled(model.sessionActive)
-                    .accessibilityHint("Selects whether Codex answers use Apple speech on this iPhone or the local Kokoro model on your Mac.")
+                    .accessibilityHint("Selects whether assistant answers use Apple speech on this iPhone or the local Kokoro model on your Mac.")
                     if model.answerVoiceEngine == .apple {
                         Picker("Apple voice", selection: $model.speechVoiceIdentifier) {
                             ForEach(model.speechVoices) { voice in

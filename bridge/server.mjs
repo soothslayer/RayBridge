@@ -103,6 +103,7 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
   const assistant = suppliedAssistant || new AssistantRouter({ codex, claude }, provider);
   const tts = suppliedTTS || new KokoroService(dataDir);
   let serviceError = null;
+  let loginPending = false;
   assistant.on('unavailable', error => { serviceError = error.message; for (const socket of wss.clients) socket.close(1011, 'Assistant connection stopped'); });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 700_000, perMessageDeflate: false });
   try { await assistant.start(); } catch (error) { serviceError = error.message; }
@@ -118,20 +119,48 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
     if (req.url !== '/v1/connect' || req.headers.origin || !authorized(req.headers.authorization, token)) {
       socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return;
     }
-    if (serviceError || wss.clients.size >= 1) {
+    const requestedProvider = req.headers['x-raybridge-assistant'];
+    if ((requestedProvider !== undefined &&
+        (typeof requestedProvider !== 'string' || !assistantProviders.has(requestedProvider))) ||
+        wss.clients.size >= 1) {
       socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n'); return;
     }
-    wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws));
+    wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
   });
-  wss.on('connection', ws => {
+  const selectProvider = async selected => {
+    if (!assistantProviders.has(selected)) throw new Error('Choose a valid assistant provider.');
+    if (typeof assistant.setProvider !== 'function') throw new Error('This assistant connection cannot change providers.');
+    if (selected === assistant.provider && serviceError) await assistant.start();
+    else await assistant.setProvider(selected);
+    provider = assistant.provider || selected;
+    await writeFile(providerPath, `${provider}\n`, { mode: 0o600 });
+    serviceError = null; loginPending = false;
+    return assistant.account();
+  };
+  wss.on('connection', async (ws, req) => {
     const send = value => { if (ws.readyState === WebSocket.OPEN) {
       if (ws.bufferedAmount > 1_000_000) ws.close(1013, 'Connection too slow');
       else ws.send(JSON.stringify(value));
     } };
-    const session = new PhoneSession(assistant, send, { tts });
-    phones.set(ws, session);
     ws.alive = true;
     ws.on('pong', () => { ws.alive = true; });
+    ws.on('error', () => ws.terminate());
+    const requestedProvider = req.headers['x-raybridge-assistant'] || assistant.provider || provider;
+    let account;
+    try {
+      account = await selectProvider(requestedProvider);
+      if (!account.signedIn) throw new Error(account.signInMessage ||
+        (requestedProvider === 'claude' ? 'Sign in to Claude Code on the Mac first.' : 'Sign in with ChatGPT on the Mac first.'));
+    } catch (error) {
+      send({ type: 'error', message: error.message });
+      const closeTimer = setTimeout(() => {
+        if (ws.readyState !== WebSocket.CLOSED) ws.close(1011, 'Assistant unavailable');
+      }, 1000);
+      closeTimer.unref();
+      return;
+    }
+    const session = new PhoneSession(assistant, send, { tts });
+    phones.set(ws, session);
     let windowStart = Date.now(), count = 0;
     ws.on('message', async (data, binary) => {
       if (Date.now() - windowStart > 1000) { windowStart = Date.now(); count = 0; }
@@ -143,9 +172,8 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
         await session.receive(message);
       } catch (error) { send({ type: 'error', message: error.message }); }
     });
-    ws.on('error', () => ws.terminate());
     ws.on('close', () => { session.close(); phones.delete(ws); });
-    send({ type: 'ready' });
+    send({ type: 'ready', provider: requestedProvider });
   });
   const heartbeat = setInterval(() => {
     for (const ws of wss.clients) {
@@ -153,7 +181,6 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
       ws.alive = false; ws.ping();
     }
   }, 15000);
-  let loginPending = false;
   assistant.on('notification', message => { if (message.method === 'account/login/completed') loginPending = false; });
   const admin = http.createServer(async (req, res) => {
     // Loopback bind plus strict Host and same-origin checks prevent LAN access and DNS rebinding.
@@ -196,14 +223,8 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
       if (req.method === 'POST' && req.url === '/api/provider') {
         const request = await readJSON(req);
         if (!assistantProviders.has(request.provider)) throw new Error('Choose a valid assistant provider.');
-        if (typeof assistant.setProvider !== 'function') throw new Error('This assistant connection cannot change providers.');
         for (const ws of wss.clients) ws.close(1000, 'Assistant provider changed');
-        serviceError = null; loginPending = false;
-        provider = request.provider;
-        try { await assistant.setProvider(provider); }
-        catch (error) { serviceError = error.message; }
-        await writeFile(providerPath, `${provider}\n`, { mode: 0o600 });
-        const account = serviceError ? { signedIn: false } : await assistant.account();
+        const account = await selectProvider(request.provider);
         return sendJSON(res, 200, { ...account, provider, error: serviceError });
       }
       if (req.method === 'POST' && req.url === '/api/login') {

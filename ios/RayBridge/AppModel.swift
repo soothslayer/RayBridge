@@ -12,6 +12,7 @@ private let voiceCommandsPreferenceKey = "voiceCommandsEnabled"
 private let legacyStopCommandPreferenceKey = "stopCommandEnabled"
 private let handsFreeStandbyPreferenceKey = "handsFreeStandbyEnabled"
 private let thinkingHeartbeatPreferenceKey = "thinkingHeartbeatEnabled"
+private let assistantProviderPreferenceKey = "assistantProvider"
 
 private func initialVoiceCommandsEnabled() -> Bool {
     let defaults = UserDefaults.standard
@@ -25,6 +26,13 @@ enum AnswerVoiceEngine: String, CaseIterable, Identifiable {
     case kokoro
     var id: String { rawValue }
     var displayName: String { self == .apple ? "Apple speech on iPhone" : "Kokoro on Mac" }
+}
+
+enum AssistantProvider: String, CaseIterable, Identifiable {
+    case codex
+    case claude
+    var id: String { rawValue }
+    var displayName: String { self == .codex ? "Codex" : "Claude Code" }
 }
 
 struct KokoroVoiceOption: Identifiable {
@@ -81,6 +89,11 @@ final class AppModel: ObservableObject {
     @Published var typedQuestion = ""
     @Published var phoneAudio = false {
         didSet { refreshStandbyListening() }
+    }
+    @Published var assistantProvider = AssistantProvider(
+        rawValue: UserDefaults.standard.string(forKey: assistantProviderPreferenceKey) ?? ""
+    ) ?? .codex {
+        didSet { UserDefaults.standard.set(assistantProvider.rawValue, forKey: assistantProviderPreferenceKey) }
     }
     @Published var answerVoiceEngine = AnswerVoiceEngine(
         rawValue: UserDefaults.standard.string(forKey: answerVoiceEnginePreferenceKey) ?? ""
@@ -316,7 +329,7 @@ final class AppModel: ObservableObject {
         }
         RayBridgeDiagnostics.event("Mac connection requested")
         connected = false; connectionFailure = nil
-        connection.connect(pairing)
+        connection.connect(pairing, assistant: assistantProvider.rawValue)
         let deadline = ContinuousClock.now.advanced(by: .seconds(20))
         while !connected {
             try Task.checkCancellation()

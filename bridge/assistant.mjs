@@ -24,9 +24,18 @@ export class AssistantRouter extends EventEmitter {
   async setProvider(provider) {
     if (!assistantProviders.has(provider) || !this.clients[provider]) throw new Error('Choose a valid assistant provider.');
     if (provider === this.provider) return;
-    this.current.stop();
+    const previousProvider = this.provider;
+    const previous = this.current;
+    previous.stop();
     this.provider = provider;
-    await this.current.start();
+    try {
+      await this.current.start();
+    } catch (error) {
+      this.current.stop();
+      this.provider = previousProvider;
+      try { await previous.start(); } catch {}
+      throw error;
+    }
   }
   async account() {
     const account = await this.current.account();

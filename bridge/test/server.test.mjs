@@ -32,6 +32,10 @@ class FakeClaude extends FakeCodex {
   async account() { return { signedIn: true, plan: 'max' }; }
 }
 
+class SignedOutClaude extends FakeClaude {
+  async account() { return { signedIn: false, signInMessage: 'Sign in to Claude Code on the Mac first.' }; }
+}
+
 test('pairing tokens require an exact bearer match', () => {
   assert.equal(authorized('Bearer secret', 'secret'), true);
   for (const value of [undefined, '', 'secret', 'Bearer wrong', ['Bearer secret']]) assert.equal(authorized(value, 'secret'), false);
@@ -144,6 +148,42 @@ test('assistant provider selection persists and exposes Claude workspace setting
   assert.equal((await fetch(`${admin}/api/provider`, {
     method: 'POST', headers, body: JSON.stringify({ provider: 'other' })
   })).status, 400);
+});
+
+test('iPhone can select its assistant while connecting', async t => {
+  const dataDir = await mkdtemp('/tmp/raybridge-phone-provider-test-');
+  const bridge = await startBridge({ dataDir, adminPort: 0, phonePort: 0,
+    codex: new FakeCodex(), claude: new FakeClaude() });
+  const sockets = [];
+  t.after(async () => { sockets.forEach(ws => ws.terminate()); await bridge.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const phone = `wss://127.0.0.1:${bridge.phone.address().port}/v1/connect`;
+  const token = (await readFile(`${dataDir}/phone-token`, 'utf8')).trim();
+  const ws = new WebSocket(phone, { rejectUnauthorized: false, headers: {
+    Authorization: `Bearer ${token}`, 'X-RayBridge-Assistant': 'claude'
+  } });
+  sockets.push(ws);
+  const ready = new Promise(resolve => ws.on('message', data => {
+    const event = JSON.parse(data);
+    if (event.type === 'ready') resolve(event);
+  }));
+  await once(ws, 'open');
+  assert.deepEqual(await ready, { type: 'ready', provider: 'claude' });
+  assert.equal((await readFile(`${dataDir}/assistant-provider`, 'utf8')).trim(), 'claude');
+});
+
+test('iPhone receives the selected assistant sign-in error before ready', async t => {
+  const dataDir = await mkdtemp('/tmp/raybridge-phone-signin-test-');
+  const bridge = await startBridge({ dataDir, adminPort: 0, phonePort: 0,
+    codex: new FakeCodex(), claude: new SignedOutClaude() });
+  const ws = new WebSocket(`wss://127.0.0.1:${bridge.phone.address().port}/v1/connect`, {
+    rejectUnauthorized: false,
+    headers: { Authorization: `Bearer ${(await readFile(`${dataDir}/phone-token`, 'utf8')).trim()}`,
+      'X-RayBridge-Assistant': 'claude' }
+  });
+  t.after(async () => { ws.terminate(); await bridge.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const firstMessage = new Promise(resolve => ws.once('message', data => resolve(JSON.parse(data))));
+  await once(ws, 'open');
+  assert.deepEqual(await firstMessage, { type: 'error', message: 'Sign in to Claude Code on the Mac first.' });
 });
 
 test('Mac setup reports and starts the optional Kokoro download', async t => {
