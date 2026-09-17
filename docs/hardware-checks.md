@@ -15,3 +15,14 @@ The physical-device checks below have **not** been completed. Mac ChatGPT Plus s
 11. Test long answers, quiet speech, noisy rooms, silence, speech-recognition unavailability, account usage limits, and an expired sign-in. Assess whether turn latency is acceptable to the intended user.
 
 For distribution, configure the Meta release channel, replace development identifiers, provision/sign the iPhone app, and prepare a signed/notarized Mac build appropriate to the target macOS/CPU. Developer setup is not an App Store/TestFlight release.
+
+## Voice commands and hands-free standby
+
+1. Leave **Listen for voice commands** and **Listen for Start while stopped** enabled (the defaults). Stop RayBridge, keep the app open, say “start,” and confirm the camera and session connect. Background the app and confirm Start is no longer heard.
+2. Say “cancel” during thinking, including with the heartbeat off. Confirm an immediate listening chime and that the next question works without restarting the camera or connection. Repeat during Apple and Kokoro answers, near the end of an answer, and while Kokoro is preparing audio. No old answer should resume after the chime.
+3. Say “stop” while listening, thinking, and speaking. Confirm the entire session ends and hands-free standby resumes after camera cleanup. Then say “start” again.
+4. Say “mute” while listening, thinking, and speaking. Confirm the falling chime without interrupting the current Codex turn or spoken answer. Questions and other commands must be ignored until the standalone word “unmute” is heard. After unmuting an idle session, confirm the listening chime and ask a question.
+5. Ask “Where is the bus stop?” and “How do I mute this?” Confirm both reach Codex. Speak “stop reading” and “cancel that” during an answer and confirm they do not trigger commands. Test loud answer audio, quiet and noisy rooms, and phone audio testing mode for accidental self-triggering.
+6. Wait silently for more than 45 seconds in standby, during thinking, and while muted; commands should continue working after recognition recycles. Repeat commands quickly and during state transitions.
+7. Disable each voice-command setting, restart the app, and verify it remains disabled. Use the screen controls, background the app, and disconnect Bluetooth during recognition; confirm microphone activity ends appropriately. Check with VoiceOver enabled and disabled.
+8. Say “start” while the glasses are registered but disconnected, and trigger a Mac connection failure. Confirm each full error is spoken after cleanup. Disconnected-glasses errors should use the iPhone speaker; other errors should use the glasses when their audio route remains available. With VoiceOver enabled, confirm only one voice announces the error.

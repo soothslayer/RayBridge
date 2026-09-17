@@ -2,7 +2,7 @@
 
 A Mac + iPhone prototype that connects Meta Ray-Ban glasses to the **Codex access included in an eligible ChatGPT subscription**. No OpenAI API key or separate API billing is used.
 
-**This is a working development foundation, not the complete live-video ChatGPT Voice experience.** It listens to a question, attaches a recent glasses camera image, waits for a Codex answer, and speaks that answer. The iPhone pauses recognition while answering, then listens again. Answers can use an installed Apple voice on the iPhone or the optional local Kokoro model on the Mac. A real ChatGPT Plus image question has passed; physical glasses validation is still required.
+**This is a working development foundation, not the complete live-video ChatGPT Voice experience.** It listens to a question, attaches a recent glasses camera image, waits for a Codex answer, and speaks that answer. The iPhone pauses question dictation while answering, listens for enabled voice controls, then returns to question dictation. Answers can use an installed Apple voice on the iPhone or the optional local Kokoro model on the Mac. A real ChatGPT Plus image question has passed; physical glasses validation is still required.
 
 ## Why this architecture
 
@@ -49,9 +49,13 @@ The checked-in Xcode project is `ios/RayBridge.xcodeproj`. It requires iOS 18+, 
 
 English (US) **on-device** speech recognition is required for the voice prototype. If it is unavailable, typed questions still work. **Setup → Use iPhone audio for testing** explicitly allows phone audio when glasses are unavailable. Default operation requires a Bluetooth headset route. Bluetooth routing, SDK streaming, and speech recognition cannot be considered validated by a successful simulator build.
 
+**Setup → Sound cues → Listen for voice commands** is on by default. Say “start” to begin from hands-free standby, “stop” to end RayBridge, or “cancel” during thinking or speech to abandon the current turn and return to listening. “Mute” lets the current turn and answer continue while ignoring everything except “unmute.” Commands must be spoken as standalone words, which preserves questions such as “Where is the bus stop?” **Listen for Start while stopped** is also on by default and keeps the microphone active for Start while RayBridge is stopped. All voice commands require RayBridge to remain open in the foreground; they do not provide background or locked-phone listening. Cancel cannot undo computer actions Codex already completed. Echo suppression and command recognition must be validated on the actual glasses.
+
 The large **Stop RayBridge** control stops the microphone, speech, camera, pending model answer, and Mac connection. It also cancels startup. Wait for camera teardown to finish before starting again. Each Start opens a new Mac conversation; previous transcript/answer text remains visible until you select **New conversation**. Backgrounding stops the session, except during the Meta AI camera-permission handoff; select **Start RayBridge** when returning. Background operation and a locked-phone experience are not implemented.
 
 If startup fails, RayBridge stops any partially started camera/audio/connection and displays the error. Select **Start RayBridge** to retry once the underlying issue is resolved. Registration and camera permission do not by themselves confirm a camera connection. RayBridge waits for asynchronous device selection before creating a session; discovery and compatibility failures now have specific messages. The Xcode marker `First glasses camera image received` confirms actual image delivery. A successful build alone does not validate the physical glasses connection.
+
+Errors are also spoken after teardown finishes. RayBridge uses the glasses audio route when available and falls back to the iPhone speaker when the glasses are disconnected. With VoiceOver running, the error is posted as a VoiceOver announcement instead of starting a second voice at the same time.
 
 If editing `ios/project.yml`, regenerate the project with `xcodegen generate --spec ios/project.yml`. Preserve your local development-team setting when regenerating; select your signing team again if it is reset.
 
@@ -107,7 +111,7 @@ xcodebuild -project ios/RayBridge.xcodeproj -scheme RayBridge \
   -derivedDataPath .build/ios CODE_SIGNING_ALLOWED=NO build
 ```
 
-Twenty-two automated tests exercise authentication, admin-origin/Host protection, TLS/WebSocket transport, a simulated phone question/answer, token revocation, subscription enforcement, stale/missing images, overlapping questions, final-answer filtering, disconnect cancellation, and Kokoro installation, audio delivery, and Apple fallback. The Codex subprocess initialization/account-read smoke check also passed with a fresh signed-out profile.
+Automated tests exercise authentication, admin-origin/Host protection, TLS/WebSocket transport, a simulated phone question/answer, token revocation, subscription enforcement, stale/missing images, overlapping questions, final-answer filtering, disconnect cancellation, Kokoro installation, audio delivery, Apple fallback, and cancellation races during turn startup and audio generation. The Codex subprocess initialization/account-read smoke check also passed with a fresh signed-out profile.
 
 After sign-in through the Mac UI, a live ChatGPT Plus test sent a generated blue rectangle containing a white 7 through the same Codex adapter and conversation handler. It correctly returned **“Blue 7”**, approximately 7 seconds after subprocess startup. This validates account authentication and image inference, not iPhone speech latency or physical glasses behavior. Mac UI launch/pairing-copy, the iPhone simulator build, and the unsigned physical-iPhone build passed. The runtime requires current named permission profiles; the retired `readOnly.access` field is not used.
 

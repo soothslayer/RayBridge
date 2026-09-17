@@ -10,11 +10,15 @@ struct RayBridgeApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(model: model)
-                .onAppear { RayBridgeDiagnostics.event("Main screen appeared") }
+                .onAppear {
+                    RayBridgeDiagnostics.event("Main screen appeared")
+                    model.foreground()
+                }
                 .onOpenURL { model.handle($0) }
                 .onChange(of: scenePhase) { _, phase in
                     // Preserve a camera permission handoff; otherwise stop on backgrounding.
                     if phase == .background { model.background() }
+                    else if phase == .active { model.foreground() }
                 }
         }
     }
@@ -46,7 +50,7 @@ struct ContentView: View {
                             if !model.answer.isEmpty { Text(model.answer).textSelection(.enabled) }
                             TextField("Type a question", text: $model.typedQuestion, axis: .vertical)
                             Button("Ask") { model.ask(model.typedQuestion); model.typedQuestion = "" }
-                                .disabled(!model.running || model.busy || model.typedQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                .disabled(!model.running || model.muted || model.busy || model.typedQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             Button("New conversation") { model.reset() }.disabled(model.sessionPhase == .stopping)
                                 .accessibilityHint("Stops RayBridge and clears this conversation. Tap Start RayBridge to begin a new one.")
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
@@ -102,6 +106,13 @@ struct SetupView: View {
                          : "RayBridge sends an image only for questions that appear visual. Say “use the camera” to always include one.")
                 }
                 Section("Sound cues") {
+                    Toggle("Listen for voice commands", isOn: $model.voiceCommandsEnabled)
+                        .disabled(model.sessionActive)
+                        .accessibilityHint("Enables Start, Stop, Cancel, Mute, and Unmute voice commands while RayBridge is in the foreground.")
+                    Toggle("Listen for Start while stopped", isOn: $model.handsFreeStandbyEnabled)
+                        .disabled(model.sessionActive || !model.voiceCommandsEnabled)
+                        .accessibilityHint("Keeps the microphone ready for the Start command while RayBridge is stopped and this app is open.")
+                    Text("Voice commands work only while this app is open. Start begins a session. Stop ends it. Cancel interrupts the current request or answer. Mute lets the current turn finish but ignores everything except Unmute. Standby keeps the microphone active while stopped so Start remains hands-free.")
                     Toggle("Play heartbeat while Codex is thinking", isOn: $model.thinkingHeartbeatEnabled)
                         .disabled(model.sessionActive)
                         .accessibilityHint("When on, a soft repeating heartbeat plays after your question until the answer is ready.")

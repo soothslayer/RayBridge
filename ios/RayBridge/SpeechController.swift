@@ -12,6 +12,11 @@ struct SpeechVoiceOption: Identifiable, Hashable {
 
 @MainActor
 final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
+    var onVoiceCommand: ((VoiceCommand) -> Void)?
+    var voiceCommandsEnabled = true
+    var questionCommands: Set<VoiceCommand> = [.stop, .cancel, .mute]
+    private var commandRestart: Task<Void, Never>?
+    private var commandFailures = 0
     var onQuestion: ((String) -> Void)?
     var onTranscript: ((String) -> Void)?
     var onError: ((String) -> Void)?
@@ -29,7 +34,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     private var transcript = ""
     private var spokenUtterance: AVSpeechUtterance?
     private var answerPlayer: AVAudioPlayer?
-    private enum CueAction { case startListening, submit(String) }
+    private enum CueAction { case startListening, submit(String), acknowledge }
     private var cuePlayer: AVAudioPlayer?
     private var cueAction: CueAction?
     private var heartbeatPlayer: AVAudioPlayer?
@@ -104,21 +109,47 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     }
     private func audioSession() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
+        var options: AVAudioSession.CategoryOptions = [.allowBluetoothHFP]
+        if allowPhoneAudio { options.insert(.defaultToSpeaker) }
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
         try session.setActive(true)
         if let glasses = session.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) {
             try session.setPreferredInput(glasses)
         } else if !allowPhoneAudio {
             throw BridgeError.message("Connect your glasses as a Bluetooth headset before listening.")
+        } else {
+            try session.setPreferredInput(nil)
         }
     }
     var hasBluetoothRoute: Bool {
         AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .bluetoothHFP || $0.portType == .bluetoothA2DP }
     }
+    var hasRecognitionPermissions: Bool {
+        SFSpeechRecognizer.authorizationStatus() == .authorized &&
+            AVAudioApplication.shared.recordPermission == .granted
+    }
     func startListening() throws {
         cancelCue()
+        try startRecognition(commands: [])
+    }
+    func startCommandListening(for commands: Set<VoiceCommand>) throws {
+        guard voiceCommandsEnabled, !commands.isEmpty else { return }
+        commandFailures = 0
+        try startRecognition(commands: commands)
+    }
+    private func startRecognition(commands: Set<VoiceCommand>) throws {
         stopListening()
         try audioSession()
+        // Voice processing reduces playback leaking into the microphone. Keep
+        // other audio ducking minimal so the answer remains audible.
+        let input = engine.inputNode
+        if input.isVoiceProcessingEnabled != voiceCommandsEnabled {
+            try input.setVoiceProcessingEnabled(voiceCommandsEnabled)
+        }
+        if voiceCommandsEnabled {
+            input.voiceProcessingOtherAudioDuckingConfiguration = .init(
+                enableAdvancedDucking: false, duckingLevel: .min)
+        }
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")), recognizer.isAvailable,
               recognizer.supportsOnDeviceRecognition else {
             throw BridgeError.message("On-device English speech recognition is unavailable. Enable it on this iPhone, or type your question below.")
@@ -126,12 +157,13 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = true
-        request.taskHint = .dictation
+        request.taskHint = commands.isEmpty ? .dictation : .confirmation
+        if !commands.isEmpty { request.contextualStrings = commands.map(\.rawValue).sorted() }
         self.request = request
         transcript = ""; listening = true
         generation += 1
         let current = generation
-        let input = engine.inputNode
+        let recognitionStarted = ContinuousClock.now
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { stopListening(); throw BridgeError.message("The microphone is not available.") }
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in request.append(buffer) }
@@ -142,6 +174,34 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
             let failure = error?.localizedDescription
             Task { @MainActor in
                 guard let self, self.listening, current == self.generation else { return }
+                if !commands.isEmpty {
+                    if let text, !text.isEmpty {
+                        let changed = text != self.transcript
+                        self.transcript = text
+                        if final {
+                            self.submitCommandTranscript(commands: commands)
+                            return
+                        }
+                        if changed {
+                            // Wait briefly for another word so “stop reading” is
+                            // not mistaken for the standalone Stop command.
+                            self.silence?.cancel()
+                            self.silence = Task { [weak self] in
+                                try? await Task.sleep(for: .milliseconds(650))
+                                guard !Task.isCancelled else { return }
+                                self?.submitCommandTranscript(commands: commands)
+                            }
+                        }
+                    }
+                    if failure != nil {
+                        // Silence may end a healthy recognition task. Only rapid,
+                        // repeated failures count toward the recovery limit.
+                        self.restartCommandRecognition(
+                            failed: !final && recognitionStarted.duration(to: .now) < .seconds(2),
+                            commands: commands)
+                    }
+                    return
+                }
                 if let text, !text.isEmpty {
                     let changed = text != self.transcript
                     self.transcript = text; self.onTranscript?(text)
@@ -163,16 +223,46 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         limit = Task { [weak self] in
             try? await Task.sleep(for: .seconds(45))
             guard !Task.isCancelled, let self else { return }
-            if !self.transcript.isEmpty { self.submit() }
+            if !commands.isEmpty {
+                self.restartCommandRecognition(failed: false, commands: commands)
+            } else if !self.transcript.isEmpty { self.submit() }
             else {
                 do { try self.startListening() } catch { self.onError?(error.localizedDescription) }
             }
+        }
+    }
+    private func submitCommandTranscript(commands: Set<VoiceCommand>) {
+        guard listening else { return }
+        let command = VoiceCommandPolicy.command(in: transcript)
+        stopListening()
+        if let command, commands.contains(command) {
+            onVoiceCommand?(command)
+        } else {
+            restartCommandRecognition(failed: false, commands: commands)
+        }
+    }
+    private func restartCommandRecognition(failed: Bool, commands: Set<VoiceCommand>) {
+        commandFailures = failed ? commandFailures + 1 : 0
+        stopListening()
+        guard commandFailures <= 3 else {
+            onError?("Voice command listening stopped working. Start RayBridge again, or turn off voice commands in Setup.")
+            return
+        }
+        commandRestart = Task { [weak self] in
+            if failed { try? await Task.sleep(for: .milliseconds(300)) }
+            guard !Task.isCancelled, let self else { return }
+            do { try self.startRecognition(commands: commands) }
+            catch { self.onError?(error.localizedDescription) }
         }
     }
     private func submit() {
         guard listening, !transcript.isEmpty else { return }
         let text = transcript
         stopListening()
+        if voiceCommandsEnabled, let command = VoiceCommandPolicy.command(in: text), questionCommands.contains(command) {
+            onVoiceCommand?(command)
+            return
+        }
         do {
             try playCue(Self.stoppedListeningCue, action: .submit(text))
         } catch {
@@ -182,7 +272,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     }
     func stopListening() {
         listening = false; generation += 1
-        silence?.cancel(); limit?.cancel()
+        silence?.cancel(); limit?.cancel(); commandRestart?.cancel(); commandRestart = nil
         engine.stop()
         if tapped { engine.inputNode.removeTap(onBus: 0); tapped = false }
         request?.endAudio(); recognition?.cancel(); recognition = nil; request = nil
@@ -192,6 +282,10 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         cancelCue()
         stopListening()
         try playCue(Self.listeningCue, action: .startListening)
+    }
+    func playMutedCue() throws {
+        cancelCue()
+        try playCue(Self.stoppedListeningCue, action: .acknowledge)
     }
     func startThinkingHeartbeat() throws {
         stopThinkingHeartbeat()
@@ -207,7 +301,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         heartbeatPlayer?.stop()
         heartbeatPlayer = nil
     }
-    func speak(_ text: String) throws {
+    func speak(_ text: String, listenForCommands commands: Set<VoiceCommand> = []) throws {
         cancelCue()
         stopThinkingHeartbeat()
         stopListening()
@@ -225,10 +319,11 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         utterance.voice = voiceIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:))
             ?? AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        if !commands.isEmpty { try startCommandListening(for: commands) }
         spokenUtterance = utterance
         synthesizer.speak(utterance)
     }
-    func speakAudio(_ data: Data) throws {
+    func speakAudio(_ data: Data, listenForCommands commands: Set<VoiceCommand> = []) throws {
         cancelCue()
         stopThinkingHeartbeat()
         stopListening()
@@ -244,6 +339,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         }
         let player = try AVAudioPlayer(data: data)
         player.delegate = self
+        if !commands.isEmpty { try startCommandListening(for: commands) }
         player.prepareToPlay()
         answerPlayer = player
         if !player.play() {
@@ -279,6 +375,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
             do { try startListening(); onStartedListening?() }
             catch { onError?(error.localizedDescription) }
         case .submit(let question): onQuestion?(question)
+        case .acknowledge: break
         case nil: break
         }
     }

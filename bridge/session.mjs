@@ -27,13 +27,15 @@ export class PhoneSession {
         break;
       case 'camera.off': this.frame = null; break;
       case 'ask': {
-        if (this.active || this.starting) throw new Error('An answer is already in progress.');
+        if (this.active || this.starting || this.cancelling) throw new Error('An answer is already in progress.');
         if (typeof message.text !== 'string' || !message.text.trim() || message.text.length > 4000)
           throw new Error('Please ask a question of 1 to 4000 characters.');
-        this.starting = true;
+        let finishStarting;
+        this.starting = new Promise(resolve => { finishStarting = resolve; });
         const generation = this.generation = (this.generation || 0) + 1;
         try {
           if (!(await this.codex.account()).signedIn) throw new Error('Sign in with ChatGPT on the Mac first.');
+          if (this.closed || generation !== this.generation) return;
           const threadId = this.threadId || await this.codex.newThread();
           if (this.closed || generation !== this.generation) return;
           this.threadId = threadId;
@@ -45,14 +47,33 @@ export class PhoneSession {
           this.timer = setTimeout(() => { this.cancel(); this.send({ type: 'error', message: 'The answer took too long. Please try again.' }); }, this.turnTimeout);
           const result = await this.codex.ask(threadId, message.text.trim(), frame);
           if (this.closed || generation !== this.generation) {
-            this.cancelledTurns.add(result.turn.id);
-            await this.codex.call('turn/interrupt', { threadId, turnId: result.turn.id }).catch(() => {});
+            if (!this.cancelledTurns.has(result.turn.id)) {
+              this.cancelledTurns.add(result.turn.id);
+              await this.codex.call('turn/interrupt', { threadId, turnId: result.turn.id })
+                .catch(error => { this.cancelError = error; });
+            }
           } else if (this.active) this.active.turnId = result.turn.id;
-        } catch (error) { clearTimeout(this.timer); this.active = null; throw error; }
-        finally { this.starting = false; }
+        } catch (error) {
+          // A failure from a cancelled request must not stop the next question.
+          if (!this.closed && generation === this.generation) {
+            clearTimeout(this.timer); this.active = null; throw error;
+          }
+        } finally { this.starting = null; finishStarting(); }
         break;
       }
-      case 'cancel': this.cancel(); this.send({ type: 'cancelled' }); break;
+      case 'cancel': {
+        const starting = this.starting;
+        this.cancelling = true;
+        this.cancel();
+        try {
+          // Acknowledge only when even an in-flight turn/start has settled and
+          // its interrupt RPC has completed. The phone can then send a new ask.
+          await Promise.all([starting, this.interruption]);
+          if (this.cancelError) throw this.cancelError;
+          if (!this.closed) this.send({ type: 'cancelled' });
+        } finally { this.cancelling = false; }
+        break;
+      }
       case 'reset': this.cancel(); this.threadId = null; this.frame = null; this.send({ type: 'ready' }); break;
       default: throw new Error('Unsupported phone message.');
     }
@@ -88,9 +109,12 @@ export class PhoneSession {
   cancel() {
     this.generation = (this.generation || 0) + 1;
     clearTimeout(this.timer);
+    this.cancelError = null;
+    this.interruption = null;
     if (this.active?.turnId) {
       this.cancelledTurns.add(this.active.turnId);
-      this.codex.call('turn/interrupt', { threadId: this.threadId, turnId: this.active.turnId }).catch(() => {});
+      this.interruption = this.codex.call('turn/interrupt', { threadId: this.threadId, turnId: this.active.turnId })
+        .catch(error => { this.cancelError = error; });
     }
     this.active = null;
   }

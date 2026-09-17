@@ -100,3 +100,76 @@ test('late completion of a cancelled turn cannot answer the next question', asyn
   assert.equal(output.some(x => x.type === 'answer'), false);
   assert.equal(session.active.turnId, 'turn-2');
 });
+
+test('Cancel waits for a pending turn start and its interrupt before acknowledging', async t => {
+  const { codex, session, output } = setup(); t.after(() => session.close());
+  let finishAsk, finishInterrupt;
+  codex.ask = () => new Promise(resolve => { finishAsk = resolve; });
+  codex.call = () => new Promise(resolve => { finishInterrupt = resolve; });
+  const asking = session.receive({ type: 'ask', text: 'First' });
+  await new Promise(resolve => setImmediate(resolve));
+  const cancelling = session.receive({ type: 'cancel' });
+  assert.equal(output.some(x => x.type === 'cancelled'), false);
+  await assert.rejects(session.receive({ type: 'ask', text: 'Too soon' }), /already/);
+  finishAsk({ turn: { id: 'old-turn' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(output.some(x => x.type === 'cancelled'), false);
+  finishInterrupt({});
+  await Promise.all([asking, cancelling]);
+  assert.equal(output.at(-1).type, 'cancelled');
+  codex.ask = async () => ({ turn: { id: 'new-turn' } });
+  await session.receive({ type: 'ask', text: 'Next question' });
+  assert.equal(session.active.turnId, 'new-turn');
+});
+
+test('Cancel discards audio arriving from Kokoro after cancellation', async t => {
+  let finishAudio;
+  const { codex, session, output } = setup({ tts: {
+    synthesize: () => new Promise(resolve => { finishAudio = resolve; })
+  } });
+  t.after(() => session.close());
+  await session.receive({ type: 'ask', text: 'Hello', ttsEngine: 'kokoro' });
+  codex.emit('notification', { method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', text: 'Old answer' } } });
+  codex.emit('notification', { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+  await session.receive({ type: 'cancel' });
+  codex.ask = async () => ({ turn: { id: 'new-turn' } });
+  await session.receive({ type: 'ask', text: 'New question' });
+  finishAudio({ format: 'm4a', data: 'YXVkaW8=' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(output.some(x => x.type === 'answer'), false);
+  assert.equal(session.active.turnId, 'new-turn');
+});
+
+test('a failed cancelled request does not report an error after Cancel', async t => {
+  const { codex, session, output } = setup(); t.after(() => session.close());
+  let failAsk;
+  codex.ask = () => new Promise((resolve, reject) => { failAsk = reject; });
+  const asking = session.receive({ type: 'ask', text: 'Hello' });
+  await new Promise(resolve => setImmediate(resolve));
+  const cancelling = session.receive({ type: 'cancel' });
+  failAsk(new Error('Turn cancelled'));
+  await Promise.all([asking, cancelling]);
+  assert.equal(output.at(-1).type, 'cancelled');
+});
+
+test('Cancel does not claim cancellation succeeded when the interrupt fails', async t => {
+  const { codex, session, output } = setup(); t.after(() => session.close());
+  await session.receive({ type: 'ask', text: 'Hello' });
+  codex.call = async () => { throw new Error('Interrupt failed'); };
+  await assert.rejects(session.receive({ type: 'cancel' }), /Interrupt failed/);
+  assert.equal(output.some(x => x.type === 'cancelled'), false);
+});
+
+test('Cancel interrupts a known turn only once while its start response is pending', async t => {
+  const { codex, session, output } = setup(); t.after(() => session.close());
+  let finishAsk;
+  codex.ask = () => new Promise(resolve => { finishAsk = resolve; });
+  const asking = session.receive({ type: 'ask', text: 'Hello' });
+  await new Promise(resolve => setImmediate(resolve));
+  codex.emit('notification', { method: 'turn/started', params: { threadId: 'thread-1', turn: { id: 'pending-turn' } } });
+  const cancelling = session.receive({ type: 'cancel' });
+  finishAsk({ turn: { id: 'pending-turn' } });
+  await Promise.all([asking, cancelling]);
+  assert.equal(codex.calls.filter(x => x[0] === 'turn/interrupt').length, 1);
+  assert.equal(output.at(-1).type, 'cancelled');
+});
