@@ -131,6 +131,8 @@ final class AppModel: ObservableObject {
     private var cameraAnnounced = false
     private var pendingCameraAnnouncement = false
     private var pendingErrorAnnouncement: String?
+    private var commandConfirmationPending = false
+    private var pendingAnswerMessage: [String: Any]?
     private var appIsActive = false
 
     private var activeResponseCommands: Set<VoiceCommand> {
@@ -159,6 +161,7 @@ final class AppModel: ObservableObject {
         stopImmediately: { [unowned self] in
             activity += 1; busy = false; cameraRequested = false
             muted = false
+            commandConfirmationPending = false; pendingAnswerMessage = nil
             cancellationPending = false; cancellationToken = nil; cancellationTimeout?.cancel()
             pendingCameraAnnouncement = false; cameraActive = false; frame = nil
             speech.stop()
@@ -231,6 +234,7 @@ final class AppModel: ObservableObject {
         speech.onFinishedSpeaking = { [weak self] in
             guard let self else { return }
             self.speech.allowPhoneAudio = self.phoneAudio
+            if self.commandConfirmationPending { return }
             if let message = self.pendingErrorAnnouncement { self.speakError(message) }
             else if self.pendingCameraAnnouncement { self.announceCameraIfReady() }
             else if self.running { self.resumeListening() }
@@ -378,6 +382,7 @@ final class AppModel: ObservableObject {
     func background() {
         appIsActive = false
         pendingErrorAnnouncement = nil
+        commandConfirmationPending = false; pendingAnswerMessage = nil
         // The permission handoff is part of startup, not a request to stop it.
         if camera.awaitingPermission { return }
         if sessionActive { stop() }
@@ -399,6 +404,7 @@ final class AppModel: ObservableObject {
         RayBridgeDiagnostics.event("Start RayBridge requested")
         speech.stop()
         pendingErrorAnnouncement = nil
+        commandConfirmationPending = false; pendingAnswerMessage = nil
         speech.allowPhoneAudio = phoneAudio
         activity += 1; error = nil; muted = false; pendingCameraAnnouncement = false
         UIApplication.shared.isIdleTimerDisabled = true
@@ -430,35 +436,75 @@ final class AppModel: ObservableObject {
     private func handleVoiceCommand(_ command: VoiceCommand) {
         switch command {
         case .start:
-            if !sessionActive { start() }
+            guard !sessionActive else { return }
+            status = "Starting RayBridge…"
+            confirmVoiceCommand("Starting.", preservingCurrentOutput: false) { [weak self] in
+                self?.start()
+            }
         case .stop:
-            if sessionActive { stop() }
+            guard sessionActive else { return }
+            status = "Stopping RayBridge…"
+            confirmVoiceCommand("Stopping.", preservingCurrentOutput: false) { [weak self] in
+                self?.stop()
+            }
         case .cancel:
-            cancelCurrentTurn()
+            cancelCurrentTurn(verballyConfirm: true)
         case .mute:
             muteVoiceInput()
         case .unmute:
             unmuteVoiceInput()
         }
     }
+    private func confirmVoiceCommand(
+        _ message: String,
+        preservingCurrentOutput: Bool,
+        completion: @escaping () -> Void
+    ) {
+        commandConfirmationPending = true
+        speech.allowPhoneAudio = phoneAudio
+        let finish = { [weak self] in
+            guard let self else { return }
+            self.commandConfirmationPending = false
+            completion()
+            if self.running, let pending = self.pendingAnswerMessage {
+                self.pendingAnswerMessage = nil
+                self.receive(pending)
+            } else if !self.running {
+                self.pendingAnswerMessage = nil
+            }
+        }
+        do {
+            try speech.speakCommandConfirmation(
+                message,
+                preservingCurrentOutput: preservingCurrentOutput,
+                completion: finish)
+        } catch {
+            finish()
+        }
+    }
     private func muteVoiceInput() {
         guard running, !muted else { return }
         RayBridgeDiagnostics.event("Voice Mute requested")
         muted = true
-        speech.stopListening()
-        listenForUnmute()
-        try? speech.playMutedCue()
+        status = "Muting voice input…"
+        confirmVoiceCommand("Muted.", preservingCurrentOutput: true) { [weak self] in
+            self?.listenForUnmute()
+        }
     }
     private func unmuteVoiceInput() {
         guard running, muted else { return }
         RayBridgeDiagnostics.event("Voice Unmute requested")
         muted = false
-        if busy || speech.isSpeaking {
-            do { try speech.startCommandListening(for: activeResponseCommands) }
-            catch { stop(); fail(error.localizedDescription); return }
-            status = busy ? "Thinking. Voice input unmuted." : "Speaking. Voice input unmuted."
-        } else {
-            resumeListening()
+        status = "Unmuting voice input…"
+        confirmVoiceCommand("Unmuted.", preservingCurrentOutput: true) { [weak self] in
+            guard let self, self.running else { return }
+            if self.busy || self.speech.isSpeaking {
+                do { try self.speech.startCommandListening(for: self.activeResponseCommands) }
+                catch { self.stop(); self.fail(error.localizedDescription); return }
+                self.status = self.busy ? "Thinking. Voice input unmuted." : "Speaking. Voice input unmuted."
+            } else {
+                self.resumeListening()
+            }
         }
     }
     private func listenForUnmute() {
@@ -507,7 +553,7 @@ final class AppModel: ObservableObject {
             }
         }
     }
-    private func cancelCurrentTurn() {
+    private func cancelCurrentTurn(verballyConfirm: Bool) {
         guard running, connected else { return }
         RayBridgeDiagnostics.event("Voice Cancel requested")
         activity += 1
@@ -515,8 +561,15 @@ final class AppModel: ObservableObject {
         let alreadyCancelling = cancellationPending
         busy = false; cancellationPending = needsMacCancellation; pendingCameraAnnouncement = false
         transcript = ""; error = nil
-        speech.stop()
-        resumeListening()
+        if verballyConfirm {
+            status = "Cancelling current turn…"
+            confirmVoiceCommand("Cancelling.", preservingCurrentOutput: false) { [weak self] in
+                self?.resumeListening()
+            }
+        } else {
+            speech.stop()
+            resumeListening()
+        }
         guard needsMacCancellation, running, !alreadyCancelling else { return }
         let token = UUID()
         cancellationToken = token
@@ -561,6 +614,10 @@ final class AppModel: ObservableObject {
             else { status = message["hasImage"] as? Bool == true ? "Thinking with a current camera image…" : "Thinking. No current camera image." }
         case "answer":
             guard running, busy, !cancellationPending, let text = message["text"] as? String else { return }
+            if commandConfirmationPending {
+                pendingAnswerMessage = message
+                return
+            }
             RayBridgeDiagnostics.event("Answer received from Mac")
             busy = false; answer = text; status = "Answer ready"
             do {

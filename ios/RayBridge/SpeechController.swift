@@ -24,6 +24,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     var onStartedListening: (() -> Void)?
     private let engine = AVAudioEngine()
     private let synthesizer = AVSpeechSynthesizer()
+    private let confirmationSynthesizer = AVSpeechSynthesizer()
     private var recognition: SFSpeechRecognitionTask?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var silence: Task<Void, Never>?
@@ -33,16 +34,27 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     private var generation = 0
     private var transcript = ""
     private var spokenUtterance: AVSpeechUtterance?
+    private var confirmationUtterance: AVSpeechUtterance?
+    private var confirmationCompletion: (() -> Void)?
+    private var resumeSpeechAfterConfirmation = false
+    private var resumeAudioAfterConfirmation = false
+    private var resumeHeartbeatAfterConfirmation = false
     private var answerPlayer: AVAudioPlayer?
-    private enum CueAction { case startListening, submit(String), acknowledge }
+    private enum CueAction { case startListening, submit(String) }
     private var cuePlayer: AVAudioPlayer?
     private var cueAction: CueAction?
     private var heartbeatPlayer: AVAudioPlayer?
     var allowPhoneAudio = false
     var voiceIdentifier: String?
-    var isSpeaking: Bool { synthesizer.isSpeaking || answerPlayer?.isPlaying == true }
+    var isSpeaking: Bool {
+        synthesizer.isSpeaking || answerPlayer?.isPlaying == true || confirmationSynthesizer.isSpeaking
+    }
 
-    override init() { super.init(); synthesizer.delegate = self }
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+        confirmationSynthesizer.delegate = self
+    }
 
     func availableVoiceOptions() -> [SpeechVoiceOption] {
         Self.englishVoices.map { voice in
@@ -283,9 +295,44 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         stopListening()
         try playCue(Self.listeningCue, action: .startListening)
     }
-    func playMutedCue() throws {
+    func speakCommandConfirmation(
+        _ text: String,
+        preservingCurrentOutput: Bool,
+        completion: @escaping () -> Void
+    ) throws {
+        cancelConfirmation()
         cancelCue()
-        try playCue(Self.stoppedListeningCue, action: .acknowledge)
+        stopListening()
+        try audioSession()
+        guard allowPhoneAudio || hasBluetoothRoute else {
+            throw BridgeError.message("Glasses audio disconnected. The command was received.")
+        }
+
+        if preservingCurrentOutput {
+            resumeSpeechAfterConfirmation = synthesizer.isSpeaking && synthesizer.pauseSpeaking(at: .immediate)
+            if answerPlayer?.isPlaying == true {
+                answerPlayer?.pause()
+                resumeAudioAfterConfirmation = true
+            }
+            if heartbeatPlayer?.isPlaying == true {
+                heartbeatPlayer?.pause()
+                resumeHeartbeatAfterConfirmation = true
+            }
+        } else {
+            spokenUtterance = nil
+            synthesizer.stopSpeaking(at: .immediate)
+            answerPlayer?.stop()
+            answerPlayer = nil
+            stopThinkingHeartbeat()
+        }
+
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = voiceIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:))
+            ?? AVSpeechSynthesisVoice(language: "en-US")
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        confirmationUtterance = utterance
+        confirmationCompletion = completion
+        confirmationSynthesizer.speak(utterance)
     }
     func startThinkingHeartbeat() throws {
         stopThinkingHeartbeat()
@@ -348,6 +395,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         }
     }
     func stop() {
+        cancelConfirmation()
         spokenUtterance = nil
         answerPlayer?.stop()
         answerPlayer = nil
@@ -375,7 +423,6 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
             do { try startListening(); onStartedListening?() }
             catch { onError?(error.localizedDescription) }
         case .submit(let question): onQuestion?(question)
-        case .acknowledge: break
         case nil: break
         }
     }
@@ -383,6 +430,30 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         cueAction = nil
         cuePlayer?.stop()
         cuePlayer = nil
+    }
+    private func cancelConfirmation() {
+        confirmationUtterance = nil
+        confirmationCompletion = nil
+        resumeSpeechAfterConfirmation = false
+        resumeAudioAfterConfirmation = false
+        resumeHeartbeatAfterConfirmation = false
+        confirmationSynthesizer.stopSpeaking(at: .immediate)
+    }
+    private func finishConfirmation(_ utterance: AVSpeechUtterance) {
+        guard confirmationUtterance === utterance else { return }
+        confirmationUtterance = nil
+        let completion = confirmationCompletion
+        confirmationCompletion = nil
+        let resumeSpeech = resumeSpeechAfterConfirmation
+        let resumeAudio = resumeAudioAfterConfirmation
+        let resumeHeartbeat = resumeHeartbeatAfterConfirmation
+        resumeSpeechAfterConfirmation = false
+        resumeAudioAfterConfirmation = false
+        resumeHeartbeatAfterConfirmation = false
+        if resumeSpeech { synthesizer.continueSpeaking() }
+        if resumeAudio { answerPlayer?.play() }
+        if resumeHeartbeat { heartbeatPlayer?.play() }
+        completion?()
     }
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
@@ -396,9 +467,20 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
+            if synthesizer === self.confirmationSynthesizer {
+                self.finishConfirmation(utterance)
+                return
+            }
             guard self.spokenUtterance === utterance else { return }
             self.spokenUtterance = nil
             self.onFinishedSpeaking?()
+        }
+    }
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            if synthesizer === self.confirmationSynthesizer {
+                self.finishConfirmation(utterance)
+            }
         }
     }
 
