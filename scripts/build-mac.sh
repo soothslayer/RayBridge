@@ -28,6 +28,11 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>NSLocalNetworkUsageDescription</key><string>Let your paired iPhone connect to the RayBridge assistant.</string>
 </dict></plist>
 PLIST
+# Explicitly re-sign copied executables before sealing the app. Current macOS
+# can reject a nested executable that retains a different Developer ID even
+# when a recursive verification of the outer development bundle succeeds.
+codesign --force --sign - "$APP/Contents/Resources/runtime/node"
+codesign --force --sign - "$APP/Contents/Resources/runtime/codex"
 codesign --force --deep --sign - "$APP"
 echo "Built $APP"
 echo "This is a local development build for this Mac architecture, not a notarized distribution."

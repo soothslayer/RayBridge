@@ -11,11 +11,11 @@ export function validJPEG(value) {
 
 // One conversation per authenticated phone connection, one turn at a time.
 export class PhoneSession {
-  constructor(codex, send, { now = Date.now, turnTimeout = 90000, tts = null } = {}) {
-    this.codex = codex; this.send = send; this.now = now; this.turnTimeout = turnTimeout; this.tts = tts;
+  constructor(assistant, send, { now = Date.now, turnTimeout = 90000, tts = null } = {}) {
+    this.assistant = assistant; this.send = send; this.now = now; this.turnTimeout = turnTimeout; this.tts = tts;
     this.cancelledTurns = new Set();
     this.listener = message => this.notification(message);
-    codex.on('notification', this.listener);
+    assistant.on('notification', this.listener);
   }
   async receive(message) {
     if (this.closed) return;
@@ -34,9 +34,10 @@ export class PhoneSession {
         this.starting = new Promise(resolve => { finishStarting = resolve; });
         const generation = this.generation = (this.generation || 0) + 1;
         try {
-          if (!(await this.codex.account()).signedIn) throw new Error('Sign in with ChatGPT on the Mac first.');
+          const account = await this.assistant.account();
+          if (!account.signedIn) throw new Error(account.signInMessage || 'Sign in to the selected assistant on the Mac first.');
           if (this.closed || generation !== this.generation) return;
-          const threadId = this.threadId || await this.codex.newThread();
+          const threadId = this.threadId || await this.assistant.newThread();
           if (this.closed || generation !== this.generation) return;
           this.threadId = threadId;
           const frame = this.frame && this.now() - this.frame.at <= FRAME_MAX_AGE_MS ? this.frame.jpeg : null;
@@ -45,11 +46,11 @@ export class PhoneSession {
             ttsVoice: typeof message.ttsVoice === 'string' ? message.ttsVoice : 'af_heart' };
           this.send({ type: 'thinking', hasImage: !!frame });
           this.timer = setTimeout(() => { this.cancel(); this.send({ type: 'error', message: 'The answer took too long. Please try again.' }); }, this.turnTimeout);
-          const result = await this.codex.ask(threadId, message.text.trim(), frame);
+          const result = await this.assistant.ask(threadId, message.text.trim(), frame);
           if (this.closed || generation !== this.generation) {
             if (!this.cancelledTurns.has(result.turn.id)) {
               this.cancelledTurns.add(result.turn.id);
-              await this.codex.call('turn/interrupt', { threadId, turnId: result.turn.id })
+              await this.assistant.call('turn/interrupt', { threadId, turnId: result.turn.id })
                 .catch(error => { this.cancelError = error; });
             }
           } else if (this.active) this.active.turnId = result.turn.id;
@@ -113,10 +114,10 @@ export class PhoneSession {
     this.interruption = null;
     if (this.active?.turnId) {
       this.cancelledTurns.add(this.active.turnId);
-      this.interruption = this.codex.call('turn/interrupt', { threadId: this.threadId, turnId: this.active.turnId })
+      this.interruption = this.assistant.call('turn/interrupt', { threadId: this.threadId, turnId: this.active.turnId })
         .catch(error => { this.cancelError = error; });
     }
     this.active = null;
   }
-  close() { this.closed = true; this.cancel(); this.frame = null; this.codex.off('notification', this.listener); }
+  close() { this.closed = true; this.cancel(); this.frame = null; this.assistant.off('notification', this.listener); }
 }

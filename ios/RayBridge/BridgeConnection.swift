@@ -31,7 +31,7 @@ final class BridgeConnection {
     private var timeout: Task<Void, Never>?
     private var ready = false
 
-    func connect(_ pairing: Pairing) {
+    func connect(_ pairing: Pairing, assistant: String) {
         disconnect()
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15
@@ -40,6 +40,7 @@ final class BridgeConnection {
         self.session = session
         var request = URLRequest(url: pairing.url)
         request.setValue("Bearer \(pairing.token)", forHTTPHeaderField: "Authorization")
+        request.setValue(assistant, forHTTPHeaderField: "X-RayBridge-Assistant")
         let socket = session.webSocketTask(with: request)
         socket.maximumMessageSize = 12_000_000
         self.socket = socket

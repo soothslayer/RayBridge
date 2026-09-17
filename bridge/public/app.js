@@ -18,19 +18,34 @@ async function pair() {
 async function refresh() {
   try {
     const data = await api('/api/status');
+    const provider = data.provider || 'codex';
     const local = data.accountSource === 'local';
-    $('account').textContent = data.signedIn
-      ? `Connected to ${local ? "this Mac’s Codex login" : 'ChatGPT'}${data.plan ? ` · ${data.plan}` : ''}`
-      : local ? 'No ChatGPT login found in this Mac’s Codex CLI' : 'Sign in to get started';
-    $('accountHelp').textContent = local
-      ? 'RayBridge uses the ChatGPT account and normal Codex configuration on this Mac. If needed, run codex login in Terminal.'
-      : 'Uses a separate RayBridge login. The Codex access and usage limits of that ChatGPT account apply.';
-    $('workspaceSettings').hidden = !local;
-    if (local && document.activeElement !== $('workspace')) $('workspace').value = data.workspace || '';
-    if (local && !applications.length) await loadApplications();
-    $('useLocal').hidden = local; $('useSeparate').hidden = !local;
-    $('login').hidden = local || data.signedIn; $('logout').hidden = local || !data.signedIn;
-    if (data.signedIn) $('authLink').hidden = true;
+    $('provider').value = provider;
+    if (provider === 'claude') {
+      $('account').textContent = data.signedIn
+        ? `Connected to Claude Code on this Mac${data.plan ? ` · ${data.plan}` : ''}`
+        : 'Claude Code is installed but is not signed in';
+      $('accountHelp').textContent = 'Uses this Mac’s normal Claude Code configuration, project instructions, tools, plugins, and MCP servers. Run claude auth login in Terminal if needed.';
+      $('localAgentNote').textContent = 'Spoken requests use Claude Code’s normal project instructions and permissions. File edits are allowed; actions that require an interactive approval are denied.';
+      $('workspaceLabel').textContent = 'Claude Code working folder';
+    } else {
+      $('account').textContent = data.signedIn
+        ? `Connected to ${local ? "this Mac’s Codex login" : 'ChatGPT'}${data.plan ? ` · ${data.plan}` : ''}`
+        : local ? 'No ChatGPT login found in this Mac’s Codex CLI' : 'Sign in to get started';
+      $('accountHelp').textContent = local
+        ? 'RayBridge uses the ChatGPT account and normal Codex configuration on this Mac. If needed, run codex login in Terminal.'
+        : 'Uses a separate RayBridge login. The Codex access and usage limits of that ChatGPT account apply.';
+      $('localAgentNote').textContent = 'Local agent mode uses this Mac’s Codex memories, tools, plugins, and computer use. Spoken requests can read and change files in the working folder and control apps you allow below.';
+      $('workspaceLabel').textContent = 'Codex working folder';
+    }
+    $('workspaceSettings').hidden = !data.workspaceEditable;
+    $('appPermissions').hidden = !data.supportsAppSelection;
+    if (data.workspaceEditable && document.activeElement !== $('workspace')) $('workspace').value = data.workspace || '';
+    if (data.supportsAppSelection && !applications.length) await loadApplications();
+    const codex = provider === 'codex';
+    $('useLocal').hidden = !codex || local; $('useSeparate').hidden = !codex || !local;
+    $('login').hidden = !codex || local || data.signedIn; $('logout').hidden = !codex || local || !data.signedIn;
+    if (data.signedIn || !codex) $('authLink').hidden = true;
     $('phone').textContent = data.phoneConnected ? 'iPhone connected' : 'Waiting for your iPhone';
     const before = $('host').value;
     if ([...$('host').options].map(x => x.value).join() !== data.hosts.join()) {
@@ -38,7 +53,7 @@ async function refresh() {
       if (data.hosts.includes(before)) $('host').value = before;
       await pair();
     }
-    if (data.error) error(data.error);
+    error(data.error || '');
     if (!data.hosts.length) error('Connect this Mac to Wi-Fi to pair an iPhone.');
     await refreshKokoro();
   } catch (e) { error(e.message); }
@@ -93,6 +108,12 @@ action('login', async () => {
   $('authLink').click();
 });
 action('logout', async () => { await api('/api/logout', 'POST'); await refresh(); });
+$('provider').onchange = async () => {
+  $('provider').disabled = true; error(''); applications = [];
+  try { await api('/api/provider', 'POST', { provider: $('provider').value }); await refresh(); }
+  catch (e) { error(e.message); await refresh(); }
+  finally { $('provider').disabled = false; }
+};
 async function source(source) {
   await api('/api/account-source', 'POST', { source });
   await refresh();

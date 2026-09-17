@@ -6,9 +6,12 @@ flowchart LR
     M[Glasses microphone] -->|iOS Bluetooth audio| I
     I -->|On-device speech recognition| Q[Question and fresh JPEG]
     Q -->|Pinned TLS WebSocket over Wi-Fi| B[Mac bridge]
-    B -->|Local stdio JSON-RPC| C[Codex app server]
+    B --> A{Selected assistant}
+    A -->|Local stdio JSON-RPC| C[Codex app server]
+    A -->|Streaming CLI process| D[Claude Code]
     C <-->|ChatGPT subscription authentication| O[OpenAI]
-    C -->|Final answer text| B
+    D <-->|Claude subscription authentication| H[Anthropic]
+    A -->|Final answer text| B
     B -->|Answer text| I
     I -->|Apple speech synthesis and Bluetooth| S[Glasses speakers]
 ```
@@ -29,7 +32,7 @@ Phone messages:
 
 Bridge events: `ready`, `thinking` (`hasImage`), `answer` (`text`), `error` (`message`), `cancelled`.
 
-The iPhone checks that the source frame is at most 2.5 seconds old **before** transmitting. The bridge measures its own receipt age rather than trusting an iPhone clock. The model is told explicitly when no current image is attached. One inference runs at a time, with a 90-second deadline. Closing the socket cancels the turn. Every connection has a separate ephemeral Codex thread; there is no transcript sharing across phones.
+The iPhone checks that the source frame is at most 2.5 seconds old **before** transmitting. The bridge measures its own receipt age rather than trusting an iPhone clock. The model is told explicitly when no current image is attached. One inference runs at a time, with a 90-second deadline. Closing the socket cancels the turn. Every connection has a separate conversation in the selected assistant; there is no transcript sharing across phones or providers.
 
 ## Intentional limits
 
@@ -38,5 +41,9 @@ Only the completed final assistant message is spoken. Intermediate commentary an
 The Mac must remain powered, awake, connected to the internet, and reachable on the same Wi-Fi network. Router client isolation or blocked incoming local connections prevent pairing. The phone protocol does not expose file access endpoints or arbitrary app-server RPC. In local Codex mode, a spoken request can cause Codex to use the files, tools, plugins, and computer-use services already configured on the Mac. The loopback-only setup page controls the working folder and the installed apps available to Computer Use; RayBridge writes that allowed-app list into each new Codex task.
 
 Subscription sign-in is implemented through `account/login/start` with `type: chatgpt`. As an alternative, the user can select the Mac's existing Codex login; RayBridge then inherits the normal `CODEX_HOME`, environment, Codex configuration, memories, plugins, and MCP servers. It launches a separate stdio app-server rather than attaching to an arbitrary interactive process. Local threads start in the folder selected on the setup page, use `workspace-write` with network access, and route eligible approvals to automatic review so voice requests can finish without a second interface. The separate-login mode retains the original read-only, tool-free restrictions. `account/read` must identify a ChatGPT account before inference; API-key and other provider accounts are rejected. The bridge uses `thread/start`, `turn/start`, `turn/interrupt`, and final item/turn notifications. Model selection follows the ChatGPT account's default rather than hardcoding an API-only model.
+
+Claude Code uses the CLI login and configuration already present on the Mac. RayBridge invokes print mode with streaming JSON, gives each phone connection its own resumable Claude session, and stages a current camera frame in a private temporary directory when needed. File edits are accepted; actions that require an interactive permission prompt are denied because the glasses session has no secure approval interface. Cancellation terminates the active Claude process. Codex and Claude events are normalized behind the same assistant contract before they reach the phone session.
+
+The iPhone stores its selected assistant and sends that choice in the authenticated, certificate-pinned WebSocket handshake. The Mac switches and validates the selected CLI before sending the ready event, then remembers that provider for the Mac setup screen. A failed launch restores the previous backend. An unsigned-in provider returns an error before the camera and microphone start, using the same spoken startup-error path as other connection failures.
 
 Sources: [OpenAI authentication](https://learn.chatgpt.com/docs/auth), [Codex app-server protocol](https://learn.chatgpt.com/docs/app-server), [Meta DAT repository](https://github.com/facebook/meta-wearables-dat-ios). API signatures were also checked against the installed Codex 0.146.0 generated schema and Meta DAT 0.6.0 compiled Swift interfaces.
