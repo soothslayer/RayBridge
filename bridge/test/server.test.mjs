@@ -27,6 +27,11 @@ class FakeCodex extends EventEmitter {
   }
 }
 
+class FakeClaude extends FakeCodex {
+  accountSource = undefined;
+  async account() { return { signedIn: true, plan: 'max' }; }
+}
+
 test('pairing tokens require an exact bearer match', () => {
   assert.equal(authorized('Bearer secret', 'secret'), true);
   for (const value of [undefined, '', 'secret', 'Bearer wrong', ['Bearer secret']]) assert.equal(authorized(value, 'secret'), false);
@@ -112,6 +117,32 @@ test('local Codex login can be selected without exposing logout', async t => {
   })).status, 400);
   assert.equal((await fetch(`${admin}/api/account-source`, {
     method: 'POST', headers, body: JSON.stringify({ source: 'invalid' })
+  })).status, 400);
+});
+
+test('assistant provider selection persists and exposes Claude workspace settings', async t => {
+  const dataDir = await mkdtemp('/tmp/raybridge-provider-test-');
+  const codex = new FakeCodex();
+  const claude = new FakeClaude();
+  const bridge = await startBridge({ dataDir, adminPort: 0, phonePort: 0, codex, claude });
+  t.after(async () => { await bridge.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const admin = `http://127.0.0.1:${bridge.admin.address().port}`;
+  const headers = { 'X-RayBridge': 'local', 'Content-Type': 'application/json' };
+  const changed = await fetch(`${admin}/api/provider`, {
+    method: 'POST', headers, body: JSON.stringify({ provider: 'claude' })
+  });
+  assert.equal(changed.status, 200);
+  assert.equal((await changed.json()).provider, 'claude');
+  assert.equal((await readFile(`${dataDir}/assistant-provider`, 'utf8')).trim(), 'claude');
+  const status = await (await fetch(`${admin}/api/status`)).json();
+  assert.equal(status.provider, 'claude');
+  assert.equal(status.workspaceEditable, true);
+  assert.equal(status.supportsAppSelection, false);
+  assert.equal((await fetch(`${admin}/api/account-source`, {
+    method: 'POST', headers, body: JSON.stringify({ source: 'local' })
+  })).status, 400);
+  assert.equal((await fetch(`${admin}/api/provider`, {
+    method: 'POST', headers, body: JSON.stringify({ provider: 'other' })
   })).status, 400);
 });
 

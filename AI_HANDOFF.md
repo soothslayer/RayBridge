@@ -2,6 +2,15 @@
 
 Updated September 17, 2026.
 
+## Active: Claude Code provider
+
+- Branch `feature/claude-code-provider` adds a provider-neutral assistant router while keeping Codex as the default.
+- The Mac setup page now selects Codex or Claude Code. Claude uses the Mac's existing CLI login, normal configuration, project instructions, tools, plugins, MCP servers, and selected working folder. This Mac's CLI reports a signed-in Pro account.
+- Claude runs in streaming print mode with a separate resumable session per phone connection. User prompts travel over stdin rather than process arguments. Current camera JPEGs are staged in RayBridge's private Application Support directory, exposed only for that turn, and deleted after completion.
+- Claude events are normalized to the existing internal turn protocol, so iPhone camera selection, thinking state, answer speech, Kokoro, reset, timeout, and Cancel/barge-in need no iPhone changes. File edits are accepted; tool actions that require an interactive permission prompt are denied.
+- The native Mac app was rebuilt and relaunched. Current macOS required explicitly ad-hoc signing the copied Node and Codex executables before sealing the development app; `scripts/build-mac.sh` now does that. A real provider switch between Claude and local Codex passed.
+- Backend syntax checks and all 32 Node tests pass, including provider switching, Claude streaming output, conversation resumption, private image staging, interruption, and setup persistence. Live end-to-end WebSocket tests through the running Mac app returned `Claude connection works.` for text and `Blue background with a white number 7.` for the existing camera fixture.
+
 ## Active: reuse this Mac's Codex login
 
 - Branch `feat/use-local-codex-login` adds an alternative to RayBridge's separate browser login.

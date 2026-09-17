@@ -1,8 +1,8 @@
 # RayBridge
 
-A Mac + iPhone prototype that connects Meta Ray-Ban glasses to the **Codex access included in an eligible ChatGPT subscription**. No OpenAI API key or separate API billing is used.
+A Mac + iPhone prototype that connects Meta Ray-Ban glasses to **Codex or Claude Code running on the Mac**. It uses the selected CLI's existing subscription login rather than requiring an API key.
 
-**This is a working development foundation, not the complete live-video ChatGPT Voice experience.** It listens to a question, attaches a recent glasses camera image, waits for a Codex answer, and speaks that answer. The iPhone pauses question dictation while answering, listens for enabled voice controls, then returns to question dictation. Answers can use an installed Apple voice on the iPhone or the optional local Kokoro model on the Mac. A real ChatGPT Plus image question has passed; physical glasses validation is still required.
+**This is a working development foundation, not a continuous live-video assistant.** It listens to a question, attaches a recent glasses camera image, waits for the selected assistant's answer, and speaks that answer. The iPhone pauses question dictation while answering, listens for enabled voice controls, then returns to question dictation. Answers can use an installed Apple voice on the iPhone or the optional local Kokoro model on the Mac. A real ChatGPT Plus image question has passed; Claude Code and physical glasses validation are still required.
 
 ## Why this architecture
 
@@ -18,14 +18,14 @@ The local build is at `build/RayBridge.app`. Double-click it, or run:
 open build/RayBridge.app
 ```
 
-1. If Codex is already signed in on this Mac, choose **Use this Mac’s Codex login**. Otherwise choose **Sign in with ChatGPT** and complete the separate RayBridge browser flow using your friend's account.
+1. Choose **Codex** or **Claude Code** from the Assistant menu. For Codex, choose **Use this Mac’s Codex login** or complete the separate RayBridge sign-in. For Claude Code, first run `claude auth login` in Terminal; RayBridge uses that existing login and Claude configuration.
 2. Keep the Mac and iPhone on the same private Wi-Fi network.
 3. Leave RayBridge running and keep the Mac awake.
 4. Pair the iPhone app using the QR code or pairing link.
 
 For the optional Kokoro answer voice, select **Download Kokoro voice** in the Mac app. This downloads the quantized model once to RayBridge's Application Support folder. Then choose **Kokoro on Mac** and a voice in the iPhone app under **Setup → Answer voice**. Kokoro generation runs locally on the Mac; if it is unavailable or fails, the iPhone reads the answer with the selected Apple voice.
 
-The development app bundles the Node and Codex executables from the build machine. This build is for Apple Silicon and is ad-hoc signed, not notarized. It is not an installer ready for general distribution. Rebuild for another CPU architecture or older macOS deployment target. Do not run the source server and Mac app at the same time: both use ports 8844/8845.
+The development app bundles the Node and Codex executables from the build machine. Claude Code is discovered from its normal installation on the Mac. This build is for Apple Silicon and is ad-hoc signed, not notarized. It is not an installer ready for general distribution. Rebuild for another CPU architecture or older macOS deployment target. Do not run the source server and Mac app at the same time: both use ports 8844/8845.
 
 To run from source, install Node.js 22+ and the official Codex CLI, then:
 

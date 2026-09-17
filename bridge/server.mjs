@@ -10,6 +10,8 @@ import { randomBytes, timingSafeEqual, X509Certificate } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import QRCode from 'qrcode';
 import { CodexClient, accountSources, resolveWorkspace, validateAllowedApps } from './codex.mjs';
+import { ClaudeClient } from './claude.mjs';
+import { AssistantRouter, assistantProviders } from './assistant.mjs';
 import { PhoneSession } from './session.mjs';
 import { KokoroService } from './tts.mjs';
 
@@ -58,7 +60,7 @@ export async function installedApplications() {
 
 export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || path.join(os.homedir(), 'Library/Application Support/RayBridge'),
   adminPort = 8844, phonePort = 8845, codex: suppliedCodex, applicationProvider = installedApplications,
-  tts: suppliedTTS } = {}) {
+  claude: suppliedClaude, assistant: suppliedAssistant, tts: suppliedTTS } = {}) {
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await chmod(dataDir, 0o700);
   const certPath = path.join(dataDir, 'server.crt');
@@ -91,11 +93,19 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
   let allowedApps = [];
   try { allowedApps = validateAllowedApps(JSON.parse(await readFile(allowedAppsPath, 'utf8'))); } catch {}
   const codex = suppliedCodex || new CodexClient(path.join(dataDir, 'codex'), undefined, accountSource, workspace, allowedApps);
+  const claude = suppliedClaude || new ClaudeClient(path.join(dataDir, 'camera-frames'), undefined, workspace);
+  const providerPath = path.join(dataDir, 'assistant-provider');
+  let provider = 'codex';
+  try {
+    const saved = (await readFile(providerPath, 'utf8')).trim();
+    if (assistantProviders.has(saved)) provider = saved;
+  } catch {}
+  const assistant = suppliedAssistant || new AssistantRouter({ codex, claude }, provider);
   const tts = suppliedTTS || new KokoroService(dataDir);
   let serviceError = null;
-  codex.on('unavailable', error => { serviceError = error.message; for (const socket of wss.clients) socket.close(1011, 'ChatGPT connection stopped'); });
+  assistant.on('unavailable', error => { serviceError = error.message; for (const socket of wss.clients) socket.close(1011, 'Assistant connection stopped'); });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 700_000, perMessageDeflate: false });
-  try { await codex.start(); } catch (error) { serviceError = error.message; }
+  try { await assistant.start(); } catch (error) { serviceError = error.message; }
   const phones = new Map();
   const sendJSON = (res, status, data) => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -118,7 +128,7 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
       if (ws.bufferedAmount > 1_000_000) ws.close(1013, 'Connection too slow');
       else ws.send(JSON.stringify(value));
     } };
-    const session = new PhoneSession(codex, send, { tts });
+    const session = new PhoneSession(assistant, send, { tts });
     phones.set(ws, session);
     ws.alive = true;
     ws.on('pong', () => { ws.alive = true; });
@@ -144,7 +154,7 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
     }
   }, 15000);
   let loginPending = false;
-  codex.on('notification', message => { if (message.method === 'account/login/completed') loginPending = false; });
+  assistant.on('notification', message => { if (message.method === 'account/login/completed') loginPending = false; });
   const admin = http.createServer(async (req, res) => {
     // Loopback bind plus strict Host and same-origin checks prevent LAN access and DNS rebinding.
     const host = req.headers.host;
@@ -154,10 +164,15 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
     if (req.method === 'POST' && req.headers['x-raybridge'] !== 'local') return sendJSON(res, 403, { error: 'Invalid local request.' });
     try {
       if (req.method === 'GET' && req.url === '/api/status') {
-        const account = serviceError ? { signedIn: false } : await codex.account();
+        const account = serviceError ? { signedIn: false, provider: assistant.provider } : await assistant.account();
         const hosts = Object.values(os.networkInterfaces()).flat().filter(x => x && x.family === 'IPv4' && !x.internal).map(x => x.address);
-        return sendJSON(res, 200, { ...account, accountSource: account.accountSource || codex.accountSource || accountSource,
-          workspace: codex.workspace || workspace, error: serviceError, phoneConnected: wss.clients.size > 0,
+        const selectedProvider = account.provider || assistant.provider || provider;
+        const selectedSource = account.accountSource || assistant.accountSource || accountSource;
+        return sendJSON(res, 200, { ...account, provider: selectedProvider, accountSource: selectedSource,
+          workspace: assistant.workspace || workspace,
+          workspaceEditable: selectedProvider === 'claude' || selectedSource === 'local',
+          supportsAppSelection: selectedProvider === 'codex' && selectedSource === 'local',
+          error: serviceError, phoneConnected: wss.clients.size > 0,
           hosts, phonePort: phone.address().port, loginPending });
       }
       if (req.method === 'GET' && req.url?.startsWith('/api/pair?')) {
@@ -178,60 +193,79 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
       if (req.method === 'POST' && req.url === '/api/tts/install') {
         return sendJSON(res, 202, await tts.startInstall());
       }
+      if (req.method === 'POST' && req.url === '/api/provider') {
+        const request = await readJSON(req);
+        if (!assistantProviders.has(request.provider)) throw new Error('Choose a valid assistant provider.');
+        if (typeof assistant.setProvider !== 'function') throw new Error('This assistant connection cannot change providers.');
+        for (const ws of wss.clients) ws.close(1000, 'Assistant provider changed');
+        serviceError = null; loginPending = false;
+        provider = request.provider;
+        try { await assistant.setProvider(provider); }
+        catch (error) { serviceError = error.message; }
+        await writeFile(providerPath, `${provider}\n`, { mode: 0o600 });
+        const account = serviceError ? { signedIn: false } : await assistant.account();
+        return sendJSON(res, 200, { ...account, provider, error: serviceError });
+      }
       if (req.method === 'POST' && req.url === '/api/login') {
-        if ((codex.accountSource || accountSource) === 'local') {
+        if ((assistant.provider || provider) !== 'codex') {
+          throw new Error('Run claude auth login in Terminal to sign in to Claude Code.');
+        }
+        if ((assistant.accountSource || accountSource) === 'local') {
           throw new Error('RayBridge is using this Mac’s Codex login. Run codex login on this Mac, or switch to a separate RayBridge login.');
         }
         if (loginPending) throw new Error('Sign-in is already open. Finish it in your browser.');
-        const login = await codex.call('account/login/start', { type: 'chatgpt' });
+        const login = await assistant.call('account/login/start', { type: 'chatgpt' });
         loginPending = true;
         return sendJSON(res, 200, { url: login.authUrl });
       }
       if (req.method === 'POST' && req.url === '/api/logout') {
-        if ((codex.accountSource || accountSource) === 'local') {
+        if ((assistant.provider || provider) !== 'codex') throw new Error('Sign out of Claude Code from Terminal.');
+        if ((assistant.accountSource || accountSource) === 'local') {
           throw new Error('Switch to a separate RayBridge login before signing out.');
         }
         for (const ws of wss.clients) ws.close(1000, 'Signed out on Mac');
-        await codex.call('account/logout'); loginPending = false;
+        await assistant.call('account/logout'); loginPending = false;
         return sendJSON(res, 200, { ok: true });
       }
       if (req.method === 'POST' && req.url === '/api/account-source') {
+        if ((assistant.provider || provider) !== 'codex') throw new Error('Account selection applies only to Codex.');
         const { source } = await readJSON(req);
         if (!accountSources.has(source)) throw new Error('Choose a valid Codex account source.');
-        if (typeof codex.setAccountSource !== 'function') throw new Error('This Codex connection cannot change account source.');
+        if (typeof assistant.setAccountSource !== 'function') throw new Error('This Codex connection cannot change account source.');
         for (const ws of wss.clients) ws.close(1000, 'Codex account source changed');
         serviceError = null; loginPending = false;
-        try { await codex.setAccountSource(source); }
+        try { await assistant.setAccountSource(source); }
         catch (error) { serviceError = error.message; throw error; }
         accountSource = source;
         await writeFile(sourcePath, `${source}\n`, { mode: 0o600 });
-        const account = await codex.account();
+        const account = await assistant.account();
         return sendJSON(res, 200, { ...account, accountSource: source });
       }
       if (req.method === 'POST' && req.url === '/api/workspace') {
-        if ((codex.accountSource || accountSource) !== 'local')
+        const selectedProvider = assistant.provider || provider;
+        if (selectedProvider === 'codex' && (assistant.accountSource || accountSource) !== 'local')
           throw new Error('Choose this Mac’s Codex login before changing its working folder.');
         const request = await readJSON(req, 5000);
         const resolved = await resolveWorkspace(request.path);
-        if (typeof codex.setWorkspace !== 'function') throw new Error('This Codex connection cannot change its working folder.');
-        for (const ws of wss.clients) ws.close(1000, 'Codex working folder changed');
+        if (typeof assistant.setWorkspace !== 'function') throw new Error('This assistant cannot change its working folder.');
+        for (const ws of wss.clients) ws.close(1000, 'Assistant working folder changed');
         serviceError = null;
-        try { await codex.setWorkspace(resolved); }
+        try { await assistant.setWorkspace(resolved); }
         catch (error) { serviceError = error.message; throw error; }
         workspace = resolved;
         await writeFile(workspacePath, `${resolved}\n`, { mode: 0o600 });
         return sendJSON(res, 200, { ok: true, workspace: resolved });
       }
       if (req.method === 'POST' && req.url === '/api/apps') {
-        if ((codex.accountSource || accountSource) !== 'local')
+        if ((assistant.provider || provider) !== 'codex' || (assistant.accountSource || accountSource) !== 'local')
           throw new Error('Choose this Mac’s Codex login before allowing apps.');
         const requested = validateAllowedApps((await readJSON(req, 200000)).apps);
         const applications = await applicationProvider();
         const installed = new Set(applications.map(app => app.id));
         if (requested.some(id => !installed.has(id))) throw new Error('Choose apps from the installed app list.');
-        if (typeof codex.setAllowedApps !== 'function') throw new Error('This Codex connection cannot change allowed apps.');
+        if (typeof assistant.setAllowedApps !== 'function') throw new Error('This Codex connection cannot change allowed apps.');
         allowedApps = requested;
-        codex.setAllowedApps(allowedApps);
+        assistant.setAllowedApps(allowedApps);
         await writeFile(allowedAppsPath, `${JSON.stringify(allowedApps, null, 2)}\n`, { mode: 0o600 });
         for (const ws of wss.clients) ws.close(1000, 'Computer Use apps changed');
         return sendJSON(res, 200, { ok: true, selected: allowedApps });
@@ -256,11 +290,11 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
     server.once('error', reject); server.listen(port, host, resolve);
   });
   try { await listen(phone, phonePort, '0.0.0.0'); await listen(admin, adminPort, '127.0.0.1'); }
-  catch (error) { clearInterval(heartbeat); phone.close(); admin.close(); codex.stop(); throw error; }
+  catch (error) { clearInterval(heartbeat); phone.close(); admin.close(); assistant.stop(); throw error; }
   return { admin, phone, close: async () => {
     clearInterval(heartbeat);
     for (const [ws, session] of phones) { session.close(); ws.terminate(); }
-    wss.close(); codex.stop();
+    wss.close(); assistant.stop();
     await Promise.all([new Promise(resolve => admin.close(resolve)), new Promise(resolve => phone.close(resolve))]);
   } };
 }
