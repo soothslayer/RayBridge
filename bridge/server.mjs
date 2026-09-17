@@ -4,11 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdir, readFile, writeFile, chmod } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomBytes, timingSafeEqual, X509Certificate } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import QRCode from 'qrcode';
-import { CodexClient, accountSources } from './codex.mjs';
+import { CodexClient, accountSources, resolveWorkspace, validateAllowedApps } from './codex.mjs';
 import { PhoneSession } from './session.mjs';
 
 export function authorized(header, token) {
@@ -28,9 +29,34 @@ async function readJSON(req, maximum = 1024) {
   catch { throw new Error('Expected a JSON request.'); }
 }
 const root = path.dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
+const blockedComputerUseApps = new Set([
+  'com.openai.chat', 'com.openai.codex', 'com.apple.Terminal', 'com.googlecode.iterm2',
+  'com.mitchellh.ghostty', 'dev.warp.Warp-Stable'
+]);
+
+export async function installedApplications() {
+  const { stdout } = await execFileAsync('/usr/bin/mdfind', ['-0', "kMDItemContentType == 'com.apple.application-bundle'"],
+    { maxBuffer: 4 * 1024 * 1024, timeout: 15000 });
+  const applicationRoots = ['/Applications/', '/System/Applications/', path.join(os.homedir(), 'Applications/')];
+  const paths = [...new Set(stdout.split('\0').filter(appPath => appPath.endsWith('.app') &&
+    applicationRoots.some(prefix => appPath.startsWith(prefix)) && !appPath.includes('.app/')))];
+  if (!paths.length) return [];
+  const identifiers = await execFileAsync('/usr/bin/mdls', ['-raw', '-name', 'kMDItemCFBundleIdentifier', ...paths],
+    { maxBuffer: 4 * 1024 * 1024, timeout: 15000 });
+  const ids = identifiers.stdout.split('\0');
+  const applications = paths.map((appPath, index) => {
+    const id = ids[index]?.trim();
+    if (!/^[A-Za-z0-9.-]{1,255}$/.test(id) || blockedComputerUseApps.has(id)) return null;
+    return { id, name: path.basename(appPath, '.app') };
+  });
+  const byId = new Map();
+  for (const app of applications) if (app && (!byId.has(app.id) || app.name.length < byId.get(app.id).name.length)) byId.set(app.id, app);
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
 
 export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || path.join(os.homedir(), 'Library/Application Support/RayBridge'),
-  adminPort = 8844, phonePort = 8845, codex: suppliedCodex } = {}) {
+  adminPort = 8844, phonePort = 8845, codex: suppliedCodex, applicationProvider = installedApplications } = {}) {
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await chmod(dataDir, 0o700);
   const certPath = path.join(dataDir, 'server.crt');
@@ -55,7 +81,14 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
     const saved = (await readFile(sourcePath, 'utf8')).trim();
     if (accountSources.has(saved)) accountSource = saved;
   } catch {}
-  const codex = suppliedCodex || new CodexClient(path.join(dataDir, 'codex'), undefined, accountSource);
+  const workspacePath = path.join(dataDir, 'codex-workspace');
+  let workspace = os.homedir();
+  try { workspace = await resolveWorkspace((await readFile(workspacePath, 'utf8')).trim()); }
+  catch { workspace = await resolveWorkspace(workspace); }
+  const allowedAppsPath = path.join(dataDir, 'computer-use-apps.json');
+  let allowedApps = [];
+  try { allowedApps = validateAllowedApps(JSON.parse(await readFile(allowedAppsPath, 'utf8'))); } catch {}
+  const codex = suppliedCodex || new CodexClient(path.join(dataDir, 'codex'), undefined, accountSource, workspace, allowedApps);
   let serviceError = null;
   codex.on('unavailable', error => { serviceError = error.message; for (const socket of wss.clients) socket.close(1011, 'ChatGPT connection stopped'); });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 700_000, perMessageDeflate: false });
@@ -121,7 +154,8 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
         const account = serviceError ? { signedIn: false } : await codex.account();
         const hosts = Object.values(os.networkInterfaces()).flat().filter(x => x && x.family === 'IPv4' && !x.internal).map(x => x.address);
         return sendJSON(res, 200, { ...account, accountSource: account.accountSource || codex.accountSource || accountSource,
-          error: serviceError, phoneConnected: wss.clients.size > 0, hosts, phonePort: phone.address().port, loginPending });
+          workspace: codex.workspace || workspace, error: serviceError, phoneConnected: wss.clients.size > 0,
+          hosts, phonePort: phone.address().port, loginPending });
       }
       if (req.method === 'GET' && req.url?.startsWith('/api/pair?')) {
         const hostIP = new URL(req.url, ownOrigin).searchParams.get('host');
@@ -129,6 +163,11 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
         if (!addresses.includes(hostIP)) throw new Error('Choose a local network address.');
         const link = `raybridge://pair?${new URLSearchParams({ host: hostIP, port: String(phone.address().port), token, fingerprint })}`;
         return sendJSON(res, 200, { link, qr: await QRCode.toDataURL(link, { width: 320, margin: 2 }) });
+      }
+      if (req.method === 'GET' && req.url === '/api/apps') {
+        const applications = await applicationProvider();
+        const installed = new Set(applications.map(app => app.id));
+        return sendJSON(res, 200, { applications, selected: allowedApps.filter(id => installed.has(id)) });
       }
       if (req.method === 'POST' && req.url === '/api/login') {
         if ((codex.accountSource || accountSource) === 'local') {
@@ -159,6 +198,34 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
         await writeFile(sourcePath, `${source}\n`, { mode: 0o600 });
         const account = await codex.account();
         return sendJSON(res, 200, { ...account, accountSource: source });
+      }
+      if (req.method === 'POST' && req.url === '/api/workspace') {
+        if ((codex.accountSource || accountSource) !== 'local')
+          throw new Error('Choose this Mac’s Codex login before changing its working folder.');
+        const request = await readJSON(req, 5000);
+        const resolved = await resolveWorkspace(request.path);
+        if (typeof codex.setWorkspace !== 'function') throw new Error('This Codex connection cannot change its working folder.');
+        for (const ws of wss.clients) ws.close(1000, 'Codex working folder changed');
+        serviceError = null;
+        try { await codex.setWorkspace(resolved); }
+        catch (error) { serviceError = error.message; throw error; }
+        workspace = resolved;
+        await writeFile(workspacePath, `${resolved}\n`, { mode: 0o600 });
+        return sendJSON(res, 200, { ok: true, workspace: resolved });
+      }
+      if (req.method === 'POST' && req.url === '/api/apps') {
+        if ((codex.accountSource || accountSource) !== 'local')
+          throw new Error('Choose this Mac’s Codex login before allowing apps.');
+        const requested = validateAllowedApps((await readJSON(req, 200000)).apps);
+        const applications = await applicationProvider();
+        const installed = new Set(applications.map(app => app.id));
+        if (requested.some(id => !installed.has(id))) throw new Error('Choose apps from the installed app list.');
+        if (typeof codex.setAllowedApps !== 'function') throw new Error('This Codex connection cannot change allowed apps.');
+        allowedApps = requested;
+        codex.setAllowedApps(allowedApps);
+        await writeFile(allowedAppsPath, `${JSON.stringify(allowedApps, null, 2)}\n`, { mode: 0o600 });
+        for (const ws of wss.clients) ws.close(1000, 'Computer Use apps changed');
+        return sendJSON(res, 200, { ok: true, selected: allowedApps });
       }
       if (req.method === 'POST' && req.url === '/api/revoke') {
         token = randomBytes(32).toString('hex');

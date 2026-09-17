@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { codexLaunch, localCodexCandidates } from '../codex.mjs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { CodexClient, codexLaunch, localCodexCandidates, validateAllowedApps } from '../codex.mjs';
 
 test('isolated account uses RayBridge CODEX_HOME and file credentials', () => {
   const launch = codexLaunch('/private/raybridge/codex', 'raybridge', {
@@ -12,21 +13,48 @@ test('isolated account uses RayBridge CODEX_HOME and file credentials', () => {
   assert.ok(launch.args.includes('permissions.raybridge.network.enabled=false'));
 });
 
-test('local account reuses the machine Codex home without weakening restrictions', () => {
+test('local account inherits the machine Codex configuration and capabilities', () => {
   const defaultHome = codexLaunch('/private/raybridge/codex', 'local', {
-    PATH: '/bin', HOME: '/Users/test', TMPDIR: '/private/tmp'
+    PATH: '/bin', HOME: '/Users/test', TMPDIR: '/private/tmp', RAYBRIDGE_TEST_VALUE: 'inherited'
   });
   assert.equal(defaultHome.env.CODEX_HOME, undefined);
-  assert.ok(!defaultHome.args.includes('cli_auth_credentials_store="file"'));
-  assert.ok(defaultHome.args.includes('features.plugins=false'));
-  assert.ok(defaultHome.args.includes('mcp_servers={}'));
-  assert.ok(defaultHome.args.includes('model_provider="openai"'));
-  assert.ok(defaultHome.args.includes('default_permissions="raybridge"'));
+  assert.equal(defaultHome.env.RAYBRIDGE_TEST_VALUE, 'inherited');
+  assert.deepEqual(defaultHome.args, ['app-server', '--listen', 'stdio://']);
 
   const customHome = codexLaunch('/private/raybridge/codex', 'local', {
     PATH: '/bin', HOME: '/Users/test', CODEX_HOME: '/custom/codex'
   });
   assert.equal(customHome.env.CODEX_HOME, '/custom/codex');
+});
+
+test('local turns use the selected workspace and allow chosen Computer Use apps', async t => {
+  const computerUseHome = await mkdtemp('/tmp/raybridge-codex-home-');
+  t.after(() => rm(computerUseHome, { recursive: true, force: true }));
+  const codex = new CodexClient('/private/raybridge/codex', 'codex', 'local', '/Users/test', ['com.apple.calculator']);
+  codex.localCodexHome = computerUseHome;
+  codex.workspace = '/Users/test';
+  const calls = [];
+  codex.call = async (method, params) => {
+    calls.push([method, params]);
+    return method === 'thread/start' ? { thread: { id: 'thread-1' } } : { turn: { id: 'turn-1' } };
+  };
+  assert.equal(await codex.newThread(), 'thread-1');
+  await codex.ask('thread-1', 'Read my notes', null);
+  assert.equal(calls[0][1].cwd, '/Users/test');
+  assert.equal(calls[0][1].sandbox, 'workspace-write');
+  assert.match(calls[0][1].developerInstructions, /memories, local files, tools, plugins, and computer use/);
+  assert.equal(await readFile(`${computerUseHome}/computer-use/sessions/thread-1.toml`, 'utf8'),
+    '[apps]\nallowed = ["com.apple.calculator"]\n');
+  assert.deepEqual(calls[1][1].sandboxPolicy, {
+    type: 'workspaceWrite', writableRoots: ['/Users/test'], networkAccess: true
+  });
+  assert.equal(calls[1][1].approvalsReviewer, 'auto_review');
+});
+
+test('Computer Use app identifiers are validated and deduplicated', () => {
+  assert.deepEqual(validateAllowedApps(['com.apple.calculator', 'com.apple.calculator']), ['com.apple.calculator']);
+  assert.throws(() => validateAllowedApps(['../Terminal']), /installed app list/);
+  assert.throws(() => validateAllowedApps('com.apple.calculator'), /installed app list/);
 });
 
 test('unknown account source is rejected', () => {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter, once } from 'node:events';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { X509Certificate } from 'node:crypto';
 import http from 'node:http';
 import { WebSocket } from 'ws';
@@ -9,10 +9,13 @@ import { startBridge, authorized } from '../server.mjs';
 
 class FakeCodex extends EventEmitter {
   accountSource = 'raybridge';
+  workspace = '/Users/test';
   async start() {}
   stop() {}
   async account() { return { signedIn: true, plan: 'plus', accountSource: this.accountSource }; }
   async setAccountSource(source) { this.accountSource = source; }
+  async setWorkspace(workspace) { this.workspace = workspace; }
+  setAllowedApps(apps) { this.allowedApps = apps; }
   async newThread() { return 'test-thread'; }
   async call() { return {}; }
   async ask(threadId) {
@@ -70,7 +73,11 @@ test('HTTPS bridge authenticates, isolates admin, and completes a phone question
 test('local Codex login can be selected without exposing logout', async t => {
   const dataDir = await mkdtemp('/tmp/raybridge-source-test-');
   const codex = new FakeCodex();
-  const bridge = await startBridge({ dataDir, adminPort: 0, phonePort: 0, codex });
+  const applicationProvider = async () => [
+    { id: 'com.apple.calculator', name: 'Calculator' },
+    { id: 'com.apple.TextEdit', name: 'TextEdit' }
+  ];
+  const bridge = await startBridge({ dataDir, adminPort: 0, phonePort: 0, codex, applicationProvider });
   t.after(async () => { await bridge.close(); await rm(dataDir, { recursive: true, force: true }); });
   const admin = `http://127.0.0.1:${bridge.admin.address().port}`;
   const headers = { 'X-RayBridge': 'local', 'Content-Type': 'application/json' };
@@ -83,6 +90,26 @@ test('local Codex login can be selected without exposing logout', async t => {
   assert.equal((await fetch(`${admin}/api/logout`, { method: 'POST', headers: { 'X-RayBridge': 'local' } })).status, 400);
   const status = await (await fetch(`${admin}/api/status`)).json();
   assert.equal(status.accountSource, 'local');
+  const workspace = `${dataDir}/workspace`;
+  await mkdir(workspace);
+  const changedWorkspace = await fetch(`${admin}/api/workspace`, {
+    method: 'POST', headers, body: JSON.stringify({ path: workspace })
+  });
+  assert.equal(changedWorkspace.status, 200);
+  const selectedWorkspace = (await changedWorkspace.json()).workspace;
+  assert.equal(codex.workspace, selectedWorkspace);
+  assert.equal((await readFile(`${dataDir}/codex-workspace`, 'utf8')).trim(), selectedWorkspace);
+  const apps = await (await fetch(`${admin}/api/apps`)).json();
+  assert.deepEqual(apps, { applications: await applicationProvider(), selected: [] });
+  const changedApps = await fetch(`${admin}/api/apps`, {
+    method: 'POST', headers, body: JSON.stringify({ apps: ['com.apple.calculator'] })
+  });
+  assert.equal(changedApps.status, 200);
+  assert.deepEqual(codex.allowedApps, ['com.apple.calculator']);
+  assert.deepEqual(JSON.parse(await readFile(`${dataDir}/computer-use-apps.json`, 'utf8')), ['com.apple.calculator']);
+  assert.equal((await fetch(`${admin}/api/apps`, {
+    method: 'POST', headers, body: JSON.stringify({ apps: ['com.apple.Terminal'] })
+  })).status, 400);
   assert.equal((await fetch(`${admin}/api/account-source`, {
     method: 'POST', headers, body: JSON.stringify({ source: 'invalid' })
   })).status, 400);
