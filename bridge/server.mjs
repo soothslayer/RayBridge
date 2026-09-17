@@ -11,6 +11,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import QRCode from 'qrcode';
 import { CodexClient, accountSources, resolveWorkspace, validateAllowedApps } from './codex.mjs';
 import { PhoneSession } from './session.mjs';
+import { KokoroService } from './tts.mjs';
 
 export function authorized(header, token) {
   const actual = Buffer.from(typeof header === 'string' ? header : '');
@@ -56,7 +57,8 @@ export async function installedApplications() {
 }
 
 export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || path.join(os.homedir(), 'Library/Application Support/RayBridge'),
-  adminPort = 8844, phonePort = 8845, codex: suppliedCodex, applicationProvider = installedApplications } = {}) {
+  adminPort = 8844, phonePort = 8845, codex: suppliedCodex, applicationProvider = installedApplications,
+  tts: suppliedTTS } = {}) {
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await chmod(dataDir, 0o700);
   const certPath = path.join(dataDir, 'server.crt');
@@ -89,6 +91,7 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
   let allowedApps = [];
   try { allowedApps = validateAllowedApps(JSON.parse(await readFile(allowedAppsPath, 'utf8'))); } catch {}
   const codex = suppliedCodex || new CodexClient(path.join(dataDir, 'codex'), undefined, accountSource, workspace, allowedApps);
+  const tts = suppliedTTS || new KokoroService(dataDir);
   let serviceError = null;
   codex.on('unavailable', error => { serviceError = error.message; for (const socket of wss.clients) socket.close(1011, 'ChatGPT connection stopped'); });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 700_000, perMessageDeflate: false });
@@ -115,7 +118,7 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
       if (ws.bufferedAmount > 1_000_000) ws.close(1013, 'Connection too slow');
       else ws.send(JSON.stringify(value));
     } };
-    const session = new PhoneSession(codex, send);
+    const session = new PhoneSession(codex, send, { tts });
     phones.set(ws, session);
     ws.alive = true;
     ws.on('pong', () => { ws.alive = true; });
@@ -168,6 +171,12 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
         const applications = await applicationProvider();
         const installed = new Set(applications.map(app => app.id));
         return sendJSON(res, 200, { applications, selected: allowedApps.filter(id => installed.has(id)) });
+      }
+      if (req.method === 'GET' && req.url === '/api/tts/status') {
+        return sendJSON(res, 200, await tts.status());
+      }
+      if (req.method === 'POST' && req.url === '/api/tts/install') {
+        return sendJSON(res, 202, await tts.startInstall());
       }
       if (req.method === 'POST' && req.url === '/api/login') {
         if ((codex.accountSource || accountSource) === 'local') {

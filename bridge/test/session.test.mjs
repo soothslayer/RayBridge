@@ -11,10 +11,10 @@ class FakeCodex extends EventEmitter {
   async call(method, params) { this.calls.push([method, params]); }
 }
 const jpeg = Buffer.from([255, 216, 0, 255, 217]).toString('base64');
-function setup() {
+function setup(options = {}) {
   const codex = new FakeCodex(), output = [];
   let time = 10000;
-  const session = new PhoneSession(codex, event => output.push(event), { now: () => time });
+  const session = new PhoneSession(codex, event => output.push(event), { now: () => time, ...options });
   return { codex, output, session, advance: ms => { time += ms; } };
 }
 test('validates camera input and bounds payloads', () => {
@@ -51,6 +51,27 @@ test('only final assistant text in the current turn is spoken', async t => {
   item('thread-1', 'final_answer', 'Hello there');
   codex.emit('notification', { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
   assert.deepEqual(output.at(-1), { type: 'answer', text: 'Hello there' });
+});
+test('Kokoro audio is attached to the final answer', async t => {
+  const tts = { synthesize: async (text, voice) => {
+    assert.equal(text, 'A useful answer'); assert.equal(voice, 'bf_emma');
+    return { format: 'm4a', data: 'YXVkaW8=' };
+  } };
+  const { codex, session, output } = setup({ tts }); t.after(() => session.close());
+  await session.receive({ type: 'ask', text: 'Hello', ttsEngine: 'kokoro', ttsVoice: 'bf_emma' });
+  codex.emit('notification', { method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', text: 'A useful answer' } } });
+  codex.emit('notification', { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(output.at(-1), { type: 'answer', text: 'A useful answer', audio: { format: 'm4a', data: 'YXVkaW8=' } });
+});
+test('Kokoro failure keeps the answer and requests Apple fallback', async t => {
+  const { codex, session, output } = setup({ tts: { synthesize: async () => { throw new Error('Model missing'); } } });
+  t.after(() => session.close());
+  await session.receive({ type: 'ask', text: 'Hello', ttsEngine: 'kokoro' });
+  codex.emit('notification', { method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', text: 'Still answered' } } });
+  codex.emit('notification', { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(output.at(-1), { type: 'answer', text: 'Still answered', ttsFallback: 'Model missing' });
 });
 test('close interrupts inference, removes listener, and releases camera memory', async () => {
   const { codex, session } = setup();

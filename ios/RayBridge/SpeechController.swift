@@ -28,13 +28,14 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     private var generation = 0
     private var transcript = ""
     private var spokenUtterance: AVSpeechUtterance?
+    private var answerPlayer: AVAudioPlayer?
     private enum CueAction { case startListening, submit(String) }
     private var cuePlayer: AVAudioPlayer?
     private var cueAction: CueAction?
     private var heartbeatPlayer: AVAudioPlayer?
     var allowPhoneAudio = false
     var voiceIdentifier: String?
-    var isSpeaking: Bool { synthesizer.isSpeaking }
+    var isSpeaking: Bool { synthesizer.isSpeaking || answerPlayer?.isPlaying == true }
 
     override init() { super.init(); synthesizer.delegate = self }
 
@@ -210,6 +211,8 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         cancelCue()
         stopThinkingHeartbeat()
         stopListening()
+        answerPlayer?.stop()
+        answerPlayer = nil
         if synthesizer.isSpeaking {
             spokenUtterance = nil
             synthesizer.stopSpeaking(at: .immediate)
@@ -225,8 +228,33 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         spokenUtterance = utterance
         synthesizer.speak(utterance)
     }
+    func speakAudio(_ data: Data) throws {
+        cancelCue()
+        stopThinkingHeartbeat()
+        stopListening()
+        if synthesizer.isSpeaking {
+            spokenUtterance = nil
+            synthesizer.stopSpeaking(at: .immediate)
+        }
+        answerPlayer?.stop()
+        answerPlayer = nil
+        try audioSession()
+        guard allowPhoneAudio || hasBluetoothRoute else {
+            throw BridgeError.message("Glasses audio disconnected. The answer is available on screen.")
+        }
+        let player = try AVAudioPlayer(data: data)
+        player.delegate = self
+        player.prepareToPlay()
+        answerPlayer = player
+        if !player.play() {
+            answerPlayer = nil
+            throw BridgeError.message("The Kokoro answer audio could not play.")
+        }
+    }
     func stop() {
         spokenUtterance = nil
+        answerPlayer?.stop()
+        answerPlayer = nil
         cancelCue()
         stopThinkingHeartbeat()
         stopListening(); synthesizer.stopSpeaking(at: .immediate)
@@ -261,8 +289,12 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     }
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
-            guard self.cuePlayer === player else { return }
-            self.finishCue()
+            if self.answerPlayer === player {
+                self.answerPlayer = nil
+                self.onFinishedSpeaking?()
+            } else if self.cuePlayer === player {
+                self.finishCue()
+            }
         }
     }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {

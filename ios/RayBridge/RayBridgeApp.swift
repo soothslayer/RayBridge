@@ -102,17 +102,33 @@ struct SetupView: View {
                          : "RayBridge sends an image only for questions that appear visual. Say “use the camera” to always include one.")
                 }
                 Section("Answer voice") {
-                    Picker("Voice", selection: $model.speechVoiceIdentifier) {
-                        ForEach(model.speechVoices) { voice in
-                            Text(voice.displayName).tag(voice.id)
+                    Picker("Voice system", selection: $model.answerVoiceEngine) {
+                        ForEach(AnswerVoiceEngine.allCases) { engine in
+                            Text(engine.displayName).tag(engine)
                         }
                     }
-                    .disabled(model.sessionActive || model.speechVoices.isEmpty)
-                    .accessibilityHint("Selects the voice used for Codex answers and RayBridge announcements.")
-                    Button("Preview selected voice") { model.previewSpeechVoice() }
-                        .disabled(model.sessionActive || model.speechVoiceIdentifier.isEmpty)
-                        .accessibilityHint("Plays a short sample through connected glasses, or through the iPhone when glasses audio is unavailable.")
-                    Text("Premium and enhanced U.S. English voices appear first when installed. Additional voices are managed in iPhone Accessibility settings. Reopen Setup after downloading a voice.")
+                    .disabled(model.sessionActive)
+                    .accessibilityHint("Selects whether Codex answers use Apple speech on this iPhone or the local Kokoro model on your Mac.")
+                    if model.answerVoiceEngine == .apple {
+                        Picker("Apple voice", selection: $model.speechVoiceIdentifier) {
+                            ForEach(model.speechVoices) { voice in
+                                Text(voice.displayName).tag(voice.id)
+                            }
+                        }
+                        .disabled(model.sessionActive || model.speechVoices.isEmpty)
+                        Button("Preview selected voice") { model.previewSpeechVoice() }
+                            .disabled(model.sessionActive || model.speechVoiceIdentifier.isEmpty)
+                            .accessibilityHint("Plays a short sample through connected glasses, or through the iPhone when glasses audio is unavailable.")
+                        Text("Premium and enhanced U.S. English voices appear first when installed. Additional voices are managed in iPhone Accessibility settings. Reopen Setup after downloading a voice.")
+                    } else {
+                        Picker("Kokoro voice", selection: $model.kokoroVoiceIdentifier) {
+                            ForEach(model.kokoroVoices) { voice in
+                                Text(voice.displayName).tag(voice.id)
+                            }
+                        }
+                        .disabled(model.sessionActive)
+                        Text("Kokoro runs privately on your Mac. Open the RayBridge Mac app and download the Kokoro model before starting. If it is unavailable, answers use the selected Apple voice automatically.")
+                    }
                 }
                 Section("Testing") {
                     Toggle("Use iPhone audio for testing", isOn: $model.phoneAudio)

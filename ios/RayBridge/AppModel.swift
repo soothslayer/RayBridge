@@ -6,6 +6,34 @@ import Darwin
 
 private let cameraImagePreferenceKey = "alwaysSendCameraImage"
 private let speechVoicePreferenceKey = "speechVoiceIdentifier"
+private let answerVoiceEnginePreferenceKey = "answerVoiceEngine"
+private let kokoroVoicePreferenceKey = "kokoroVoiceIdentifier"
+
+enum AnswerVoiceEngine: String, CaseIterable, Identifiable {
+    case apple
+    case kokoro
+    var id: String { rawValue }
+    var displayName: String { self == .apple ? "Apple speech on iPhone" : "Kokoro on Mac" }
+}
+
+struct KokoroVoiceOption: Identifiable {
+    let id: String
+    let displayName: String
+    static let english = [
+        KokoroVoiceOption(id: "af_heart", displayName: "Heart, American female"),
+        KokoroVoiceOption(id: "af_bella", displayName: "Bella, American female"),
+        KokoroVoiceOption(id: "af_nova", displayName: "Nova, American female"),
+        KokoroVoiceOption(id: "af_sarah", displayName: "Sarah, American female"),
+        KokoroVoiceOption(id: "af_sky", displayName: "Sky, American female"),
+        KokoroVoiceOption(id: "am_fenrir", displayName: "Fenrir, American male"),
+        KokoroVoiceOption(id: "am_michael", displayName: "Michael, American male"),
+        KokoroVoiceOption(id: "am_puck", displayName: "Puck, American male"),
+        KokoroVoiceOption(id: "bf_emma", displayName: "Emma, British female"),
+        KokoroVoiceOption(id: "bf_isabella", displayName: "Isabella, British female"),
+        KokoroVoiceOption(id: "bm_daniel", displayName: "Daniel, British male"),
+        KokoroVoiceOption(id: "bm_george", displayName: "George, British male")
+    ]
+}
 
 // Accept only static messages so transcripts, camera data, and pairing credentials
 // cannot accidentally be passed to the persistent device log.
@@ -41,6 +69,15 @@ final class AppModel: ObservableObject {
     @Published var pairingText = ""
     @Published var typedQuestion = ""
     @Published var phoneAudio = false
+    @Published var answerVoiceEngine = AnswerVoiceEngine(
+        rawValue: UserDefaults.standard.string(forKey: answerVoiceEnginePreferenceKey) ?? ""
+    ) ?? .apple {
+        didSet { UserDefaults.standard.set(answerVoiceEngine.rawValue, forKey: answerVoiceEnginePreferenceKey) }
+    }
+    @Published var kokoroVoiceIdentifier = UserDefaults.standard.string(forKey: kokoroVoicePreferenceKey) ?? "af_heart" {
+        didSet { UserDefaults.standard.set(kokoroVoiceIdentifier, forKey: kokoroVoicePreferenceKey) }
+    }
+    let kokoroVoices = KokoroVoiceOption.english
     @Published var speechVoiceIdentifier = "" {
         didSet {
             speech.voiceIdentifier = speechVoiceIdentifier
@@ -293,7 +330,9 @@ final class AppModel: ObservableObject {
                     try await connection.send(["type": "frame", "jpeg": frame.data.base64EncodedString()])
                 } else { try await connection.send(["type": "camera.off"]) }
                 guard current == activity else { return }
-                try await connection.send(["type": "ask", "text": text])
+                try await connection.send(["type": "ask", "text": text,
+                                           "ttsEngine": answerVoiceEngine.rawValue,
+                                           "ttsVoice": kokoroVoiceIdentifier])
             } catch {
                 guard current == activity, running else { return }
                 stop(); fail(error.localizedDescription)
@@ -324,7 +363,16 @@ final class AppModel: ObservableObject {
             busy = false; answer = text; status = "Answer ready"
             do {
                 speech.allowPhoneAudio = phoneAudio
-                try speech.speak(text); status = "Speaking"
+                if let audio = message["audio"] as? [String: Any],
+                   audio["format"] as? String == "m4a",
+                   let encoded = audio["data"] as? String,
+                   let data = Data(base64Encoded: encoded) {
+                    try speech.speakAudio(data)
+                    status = "Speaking with Kokoro"
+                } else {
+                    try speech.speak(text)
+                    status = message["ttsFallback"] == nil ? "Speaking" : "Speaking with Apple voice. Kokoro is unavailable on the Mac."
+                }
             } catch { stop(); fail(error.localizedDescription) }
         case "error":
             let text = message["message"] as? String ?? "The Mac reported an error."

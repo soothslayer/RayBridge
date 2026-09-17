@@ -40,7 +40,17 @@ async function refresh() {
     }
     if (data.error) error(data.error);
     if (!data.hosts.length) error('Connect this Mac to Wi-Fi to pair an iPhone.');
+    await refreshKokoro();
   } catch (e) { error(e.message); }
+}
+async function refreshKokoro() {
+  const data = await api('/api/tts/status');
+  $('kokoroStatus').textContent = data.error ? `${data.detail} ${data.error}` : data.detail;
+  $('kokoroProgress').hidden = !data.installing || typeof data.progress !== 'number';
+  if (!$('kokoroProgress').hidden) $('kokoroProgress').value = data.progress;
+  $('installKokoro').hidden = data.installed && !data.error;
+  $('installKokoro').disabled = data.installing;
+  $('installKokoro').textContent = data.installing ? 'Downloading Kokoro…' : data.error ? 'Retry Kokoro download' : 'Download Kokoro voice';
 }
 function renderApplications() {
   const query = $('appSearch').value.trim().toLocaleLowerCase();
@@ -107,5 +117,6 @@ $('allowAllApps').onchange = () => {
 };
 action('copy', async () => { await navigator.clipboard.writeText(pairingLink); $('copy').textContent = 'Pairing link copied'; });
 action('revoke', async () => { await api('/api/revoke', 'POST'); await pair(); await refresh(); });
+action('installKokoro', async () => { await api('/api/tts/install', 'POST'); await refreshKokoro(); });
 $('host').onchange = () => pair().catch(e => error(e.message));
 refresh(); setInterval(refresh, 4000);

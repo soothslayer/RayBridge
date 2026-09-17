@@ -11,8 +11,8 @@ export function validJPEG(value) {
 
 // One conversation per authenticated phone connection, one turn at a time.
 export class PhoneSession {
-  constructor(codex, send, { now = Date.now, turnTimeout = 90000 } = {}) {
-    this.codex = codex; this.send = send; this.now = now; this.turnTimeout = turnTimeout;
+  constructor(codex, send, { now = Date.now, turnTimeout = 90000, tts = null } = {}) {
+    this.codex = codex; this.send = send; this.now = now; this.turnTimeout = turnTimeout; this.tts = tts;
     this.cancelledTurns = new Set();
     this.listener = message => this.notification(message);
     codex.on('notification', this.listener);
@@ -38,7 +38,9 @@ export class PhoneSession {
           if (this.closed || generation !== this.generation) return;
           this.threadId = threadId;
           const frame = this.frame && this.now() - this.frame.at <= FRAME_MAX_AGE_MS ? this.frame.jpeg : null;
-          this.active = { text: '', turnId: null };
+          this.active = { text: '', turnId: null,
+            ttsEngine: message.ttsEngine === 'kokoro' ? 'kokoro' : 'apple',
+            ttsVoice: typeof message.ttsVoice === 'string' ? message.ttsVoice : 'af_heart' };
           this.send({ type: 'thinking', hasImage: !!frame });
           this.timer = setTimeout(() => { this.cancel(); this.send({ type: 'error', message: 'The answer took too long. Please try again.' }); }, this.turnTimeout);
           const result = await this.codex.ask(threadId, message.text.trim(), frame);
@@ -64,10 +66,23 @@ export class PhoneSession {
       this.active.text = p.item.text;
     if (method === 'turn/completed') {
       if (this.active.turnId && p.turn.id !== this.active.turnId) return;
-      const text = this.active.text;
+      const active = this.active;
+      const text = active.text;
       clearTimeout(this.timer); this.active = null;
-      if (p.turn.status === 'completed' && text) this.send({ type: 'answer', text });
+      if (p.turn.status === 'completed' && text) {
+        if (active.ttsEngine === 'kokoro' && this.tts) void this.kokoroAnswer(text, active.ttsVoice, this.generation);
+        else this.send({ type: 'answer', text });
+      }
       else this.send({ type: 'error', message: p.turn.error?.message || 'The answer was interrupted or empty. Please try again.' });
+    }
+  }
+  async kokoroAnswer(text, voice, generation) {
+    try {
+      const audio = await this.tts.synthesize(text, voice);
+      if (!this.closed && generation === this.generation) this.send({ type: 'answer', text, audio });
+    } catch (error) {
+      if (!this.closed && generation === this.generation)
+        this.send({ type: 'answer', text, ttsFallback: error.message || 'Kokoro is unavailable.' });
     }
   }
   cancel() {

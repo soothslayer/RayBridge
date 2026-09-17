@@ -114,3 +114,21 @@ test('local Codex login can be selected without exposing logout', async t => {
     method: 'POST', headers, body: JSON.stringify({ source: 'invalid' })
   })).status, 400);
 });
+
+test('Mac setup reports and starts the optional Kokoro download', async t => {
+  const dataDir = await mkdtemp('/tmp/raybridge-tts-api-test-');
+  let started = 0;
+  const tts = {
+    async status() { return { installed: false, installing: started > 0, progress: started ? 25 : null, detail: 'Optional voice', error: null }; },
+    async startInstall() { started += 1; return this.status(); },
+    async synthesize() { throw new Error('unused'); }
+  };
+  const bridge = await startBridge({ dataDir, adminPort: 0, phonePort: 0, codex: new FakeCodex(), tts });
+  t.after(async () => { await bridge.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const admin = `http://127.0.0.1:${bridge.admin.address().port}`;
+  assert.equal((await (await fetch(`${admin}/api/tts/status`)).json()).installing, false);
+  const response = await fetch(`${admin}/api/tts/install`, { method: 'POST', headers: { 'X-RayBridge': 'local' } });
+  assert.equal(response.status, 202);
+  assert.equal((await response.json()).progress, 25);
+  assert.equal(started, 1);
+});

@@ -3,11 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node bridge/server.mjs",
     "test": "node --test bridge/test/*.test.mjs",
-    "check": "node --check bridge/server.mjs && node --check bridge/codex.mjs && node --check bridge/session.mjs"
+    "check": "node --check bridge/server.mjs && node --check bridge/codex.mjs && node --check bridge/session.mjs && node --check bridge/tts.mjs"
   },
-  "dependencies": { "ws": "^8.18.3", "qrcode": "^1.5.4" }
+  "dependencies": {
+    "kokoro-js": "^1.2.1",
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.3"
+  },
+  "overrides": {
+    "sharp": "0.35.4"
+  }
 }

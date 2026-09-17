@@ -41,7 +41,7 @@ final class BridgeConnection {
         var request = URLRequest(url: pairing.url)
         request.setValue("Bearer \(pairing.token)", forHTTPHeaderField: "Authorization")
         let socket = session.webSocketTask(with: request)
-        socket.maximumMessageSize = 1_000_000
+        socket.maximumMessageSize = 12_000_000
         self.socket = socket
         socket.resume()
         timeout = Task { [weak self] in

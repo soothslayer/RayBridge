@@ -2,7 +2,7 @@
 
 A Mac + iPhone prototype that connects Meta Ray-Ban glasses to the **Codex access included in an eligible ChatGPT subscription**. No OpenAI API key or separate API billing is used.
 
-**This is a working development foundation, not the complete live-video ChatGPT Voice experience.** It listens to a question, attaches a recent glasses camera image, waits for a Codex answer, and speaks that answer. The iPhone pauses recognition while answering, then listens again. A real ChatGPT Plus image question has passed; physical glasses validation is still required.
+**This is a working development foundation, not the complete live-video ChatGPT Voice experience.** It listens to a question, attaches a recent glasses camera image, waits for a Codex answer, and speaks that answer. The iPhone pauses recognition while answering, then listens again. Answers can use an installed Apple voice on the iPhone or the optional local Kokoro model on the Mac. A real ChatGPT Plus image question has passed; physical glasses validation is still required.
 
 ## Why this architecture
 
@@ -22,6 +22,8 @@ open build/RayBridge.app
 2. Keep the Mac and iPhone on the same private Wi-Fi network.
 3. Leave RayBridge running and keep the Mac awake.
 4. Pair the iPhone app using the QR code or pairing link.
+
+For the optional Kokoro answer voice, select **Download Kokoro voice** in the Mac app. This downloads the quantized model once to RayBridge's Application Support folder. Then choose **Kokoro on Mac** and a voice in the iPhone app under **Setup → Answer voice**. Kokoro generation runs locally on the Mac; if it is unavailable or fails, the iPhone reads the answer with the selected Apple voice.
 
 The development app bundles the Node and Codex executables from the build machine. This build is for Apple Silicon and is ad-hoc signed, not notarized. It is not an installer ready for general distribution. Rebuild for another CPU architecture or older macOS deployment target. Do not run the source server and Mac app at the same time: both use ports 8844/8845.
 
@@ -90,7 +92,7 @@ These checks cover the validation failures reported for build 1; they do not rep
 - Mac setup is served only on loopback port 8844. Phone traffic uses TLS on port 8845 and an unpredictable bearer token. The iPhone pins the Mac's certificate fingerprint from pairing; it does not globally disable certificate checks.
 - One phone can connect at a time. **Disconnect and replace pairing link** revokes the old token and disconnects the phone. Re-pair if the Mac's address or certificate changes. IPv4 private LAN addresses are supported; Bonjour discovery and IPv6 are not implemented.
 - Meta streams camera frames to the iPhone. The app samples up to one JPEG per second locally and retains the most recent one in memory. A question sends that frame to the Mac only if it is recent. The Mac keeps one frame and rejects stale visual context. Idle streaming does not continuously submit model turns.
-- Audio is transcribed on the iPhone. Question text and an optional JPEG travel via the Mac to OpenAI through Codex. Text answers return to the iPhone and are spoken with Apple's speech synthesis.
+- Audio is transcribed on the iPhone. Question text and an optional JPEG travel via the Mac to OpenAI through Codex. Answers return as text for Apple speech or, when selected, as audio generated locally by Kokoro on the Mac. The Kokoro model is downloaded from Hugging Face and does not receive the question or answer over a hosted speech API.
 - By default, Codex uses an app-specific profile under `~/Library/Application Support/RayBridge/codex` and remains a restricted visual assistant. **Use this Mac’s Codex login** starts a separate app-server connection that reuses the login and normal configuration in `CODEX_HOME` or `~/.codex`, including memories, tools, plugins, MCP servers, browser, and computer use. Local mode defaults its working folder to the Mac user’s home folder; change it on the Mac setup page to narrow file access. The same page lists installed apps so the user can explicitly choose which ones spoken Computer Use requests may operate. Saved choices apply to new phone sessions. Turns use a writable workspace sandbox with network access and automatic approval review. Direct requests that still require a person at the Mac are declined. RayBridge chooses the newest working Codex executable installed with ChatGPT, Codex, or the CLI, then falls back to its bundled executable. Set `RAYBRIDGE_LOCAL_CODEX` to force an executable or `RAYBRIDGE_WORKSPACE` to set the initial working folder. RayBridge never reads or copies credentials, does not attach to another client’s live transport or conversation, and cannot sign the shared account out. The local TLS key remains in the RayBridge application-support directory.
 - Conversations request ephemeral mode. RayBridge does not create recordings or transcript files. This is not a promise of zero retention by the OS, SDK, Codex diagnostics, or OpenAI; their applicable policies still govern data handling.
 - The phone protocol cannot invoke arbitrary Codex methods. The separate-login mode disables shell, browser, plugin, computer-use, and multi-agent features and uses read-only access. Local mode lets Codex itself choose and run the capabilities already configured on the Mac; the phone still sends only camera frames, questions, cancellation, and reset messages.
@@ -105,7 +107,7 @@ xcodebuild -project ios/RayBridge.xcodeproj -scheme RayBridge \
   -derivedDataPath .build/ios CODE_SIGNING_ALLOWED=NO build
 ```
 
-Ten automated tests exercise authentication, admin-origin/Host protection, TLS/WebSocket transport, a simulated phone question/answer, token revocation, subscription enforcement, stale/missing images, overlapping questions, final-answer filtering, and disconnect cancellation. The Codex subprocess initialization/account-read smoke check also passed with a fresh signed-out profile.
+Twenty-two automated tests exercise authentication, admin-origin/Host protection, TLS/WebSocket transport, a simulated phone question/answer, token revocation, subscription enforcement, stale/missing images, overlapping questions, final-answer filtering, disconnect cancellation, and Kokoro installation, audio delivery, and Apple fallback. The Codex subprocess initialization/account-read smoke check also passed with a fresh signed-out profile.
 
 After sign-in through the Mac UI, a live ChatGPT Plus test sent a generated blue rectangle containing a white 7 through the same Codex adapter and conversation handler. It correctly returned **“Blue 7”**, approximately 7 seconds after subprocess startup. This validates account authentication and image inference, not iPhone speech latency or physical glasses behavior. Mac UI launch/pairing-copy, the iPhone simulator build, and the unsigned physical-iPhone build passed. The runtime requires current named permission profiles; the retired `readOnly.access` field is not used.
 
