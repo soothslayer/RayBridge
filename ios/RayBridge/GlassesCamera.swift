@@ -19,7 +19,7 @@ final class FrameSampler: @unchecked Sendable {
 }
 
 @MainActor
-final class GlassesCamera {
+final class GlassesCamera: CameraSource {
     var onFrame: ((Data) -> Void)?
     var onStatus: ((String, Bool) -> Void)?
     var onRegistration: ((String) -> Void)?
@@ -33,6 +33,29 @@ final class GlassesCamera {
     private var configured = false
     private var selector: AutoDeviceSelector?
     var isRegistered: Bool { configured && Wearables.shared.registrationState == .registered }
+
+    // A fast, synchronous view of the glasses so Start can warn before spending
+    // up to fifteen seconds on device selection. Device state can still lag the
+    // hardware, so an unready answer only offers a choice; it never blocks.
+    var readiness: GlassesReadiness {
+        guard configured else { return .discoveryUnavailable }
+        guard Wearables.shared.registrationState == .registered else { return .notRegistered }
+        let devices = Wearables.shared.devices.compactMap { Wearables.shared.deviceForIdentifier($0) }
+        // Compatibility is undefined until the SDK finishes inspecting a device;
+        // treat that as usable and let camera startup report the real problem.
+        struct Glasses { let connected: Bool; let connecting: Bool; let usable: Bool }
+        let states = devices.map {
+            Glasses(connected: $0.linkState == .connected,
+                    connecting: $0.linkState == .connecting,
+                    usable: $0.compatibility() != .deviceUpdateRequired
+                        && $0.compatibility() != .sdkUpdateRequired)
+        }
+        guard !states.isEmpty else { return .noGlassesFound }
+        if states.contains(where: { $0.connected && $0.usable }) { return .ready }
+        if states.contains(where: { $0.connecting && $0.usable }) { return .connecting }
+        if states.allSatisfy({ !$0.usable }) { return .needsUpdate }
+        return .notConnected
+    }
 
     func configure() throws {
         if !configured {
