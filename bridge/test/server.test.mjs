@@ -36,6 +36,11 @@ class SignedOutClaude extends FakeClaude {
   async account() { return { signedIn: false, signInMessage: 'Sign in to Claude Code on the Mac first.' }; }
 }
 
+class FakeHermes extends FakeCodex {
+  accountSource = undefined;
+  async account() { return { signedIn: true, plan: 'local' }; }
+}
+
 test('pairing tokens require an exact bearer match', () => {
   assert.equal(authorized('Bearer secret', 'secret'), true);
   for (const value of [undefined, '', 'secret', 'Bearer wrong', ['Bearer secret']]) assert.equal(authorized(value, 'secret'), false);
@@ -148,6 +153,25 @@ test('assistant provider selection persists and exposes Claude workspace setting
   assert.equal((await fetch(`${admin}/api/provider`, {
     method: 'POST', headers, body: JSON.stringify({ provider: 'other' })
   })).status, 400);
+});
+
+test('assistant provider selection supports Hermes', async t => {
+  const dataDir = await mkdtemp('/tmp/raybridge-hermes-provider-test-');
+  const hermes = new FakeHermes();
+  const bridge = await startBridge({ dataDir, adminPort: 0, phonePort: 0,
+    codex: new FakeCodex(), claude: new FakeClaude(), hermes });
+  t.after(async () => { await bridge.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const admin = `http://127.0.0.1:${bridge.admin.address().port}`;
+  const changed = await fetch(`${admin}/api/provider`, { method: 'POST',
+    headers: { 'X-RayBridge': 'local', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider: 'hermes' }) });
+  assert.equal(changed.status, 200);
+  assert.equal((await changed.json()).provider, 'hermes');
+  assert.equal((await readFile(`${dataDir}/assistant-provider`, 'utf8')).trim(), 'hermes');
+  const status = await (await fetch(`${admin}/api/status`)).json();
+  assert.equal(status.provider, 'hermes');
+  assert.equal(status.workspaceEditable, true);
+  assert.equal(status.supportsAppSelection, false);
 });
 
 test('iPhone can select its assistant while connecting', async t => {

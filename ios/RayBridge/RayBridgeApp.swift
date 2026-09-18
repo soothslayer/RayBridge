@@ -105,7 +105,7 @@ struct SetupView: View {
                     }
                     .disabled(model.sessionActive)
                     .accessibilityHint("Selects which signed-in assistant on your paired Mac answers your questions.")
-                    Text("Both assistants run through their command-line tools on your Mac. Sign in to each one there once, then you can switch here before starting RayBridge.")
+                    Text("The assistants run through their command-line tools on your Mac. Configure each one there first, then you can switch here before starting RayBridge.")
                 }
                 Section("Camera images") {
                     Toggle("Send camera image with every question", isOn: $model.alwaysSendCameraImage)

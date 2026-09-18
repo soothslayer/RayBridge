@@ -16,7 +16,8 @@ class FakeAssistant extends EventEmitter {
 test('assistant router switches backends and only forwards the active backend', async () => {
   const codex = new FakeAssistant('codex');
   const claude = new FakeAssistant('claude');
-  const router = new AssistantRouter({ codex, claude });
+  const hermes = new FakeAssistant('hermes');
+  const router = new AssistantRouter({ codex, claude, hermes });
   const notifications = [];
   router.on('notification', message => notifications.push(message));
   await router.start();
@@ -30,6 +31,9 @@ test('assistant router switches backends and only forwards the active backend', 
   assert.equal(claude.starts, 1);
   assert.equal((await router.account()).provider, 'claude');
   assert.equal(await router.newThread(), 'claude-thread');
+  await router.setProvider('hermes');
+  assert.equal((await router.account()).provider, 'hermes');
+  assert.equal(await router.newThread(), 'hermes-thread');
   await assert.rejects(router.setProvider('other'), /valid assistant/);
 });
 

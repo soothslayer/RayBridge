@@ -28,6 +28,13 @@ async function refresh() {
       $('accountHelp').textContent = 'Uses this Mac’s normal Claude Code configuration, project instructions, tools, plugins, and MCP servers. Run claude auth login in Terminal if needed.';
       $('localAgentNote').textContent = 'Spoken requests use Claude Code’s normal project instructions and permissions. File edits are allowed; actions that require an interactive approval are denied.';
       $('workspaceLabel').textContent = 'Claude Code working folder';
+    } else if (provider === 'hermes') {
+      $('account').textContent = data.signedIn
+        ? `Hermes is available on this Mac${data.plan ? ` · ${data.plan}` : ''}`
+        : 'Hermes is not installed or configured';
+      $('accountHelp').textContent = 'Uses this Mac’s normal Hermes model, memories, project instructions, tools, plugins, and computer use.';
+      $('localAgentNote').textContent = 'Spoken requests use Hermes’s normal tools and permissions. Review its configuration before allowing it to control this Mac.';
+      $('workspaceLabel').textContent = 'Hermes working folder';
     } else {
       $('account').textContent = data.signedIn
         ? `Connected to ${local ? "this Mac’s Codex login" : 'ChatGPT'}${data.plan ? ` · ${data.plan}` : ''}`

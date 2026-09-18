@@ -31,8 +31,15 @@ enum AnswerVoiceEngine: String, CaseIterable, Identifiable {
 enum AssistantProvider: String, CaseIterable, Identifiable {
     case codex
     case claude
+    case hermes
     var id: String { rawValue }
-    var displayName: String { self == .codex ? "Codex" : "Claude Code" }
+    var displayName: String {
+        switch self {
+        case .codex: "Codex"
+        case .claude: "Claude Code"
+        case .hermes: "Hermes"
+        }
+    }
 }
 
 struct KokoroVoiceOption: Identifiable {

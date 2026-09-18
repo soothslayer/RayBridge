@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 
-export const assistantProviders = new Set(['codex', 'claude']);
+export const assistantProviders = new Set(['codex', 'claude', 'hermes']);
 
 // Presents every assistant backend through the event and method contract used
 // by PhoneSession. Switching providers stops the old backend before starting
@@ -41,7 +41,8 @@ export class AssistantRouter extends EventEmitter {
     const account = await this.current.account();
     return { ...account, provider: this.provider,
       signInMessage: account.signInMessage || (this.provider === 'claude'
-        ? 'Sign in to Claude Code on the Mac first.' : 'Sign in with ChatGPT on the Mac first.') };
+        ? 'Sign in to Claude Code on the Mac first.' : this.provider === 'hermes'
+          ? 'Install and configure Hermes on the Mac first.' : 'Sign in with ChatGPT on the Mac first.') };
   }
   newThread() { return this.current.newThread(); }
   ask(threadId, question, frame) { return this.current.ask(threadId, question, frame); }

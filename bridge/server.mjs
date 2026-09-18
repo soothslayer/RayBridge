@@ -11,6 +11,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import QRCode from 'qrcode';
 import { CodexClient, accountSources, resolveWorkspace, validateAllowedApps } from './codex.mjs';
 import { ClaudeClient } from './claude.mjs';
+import { HermesClient } from './hermes.mjs';
 import { AssistantRouter, assistantProviders } from './assistant.mjs';
 import { PhoneSession } from './session.mjs';
 import { KokoroService } from './tts.mjs';
@@ -60,7 +61,7 @@ export async function installedApplications() {
 
 export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || path.join(os.homedir(), 'Library/Application Support/RayBridge'),
   adminPort = 8844, phonePort = 8845, codex: suppliedCodex, applicationProvider = installedApplications,
-  claude: suppliedClaude, assistant: suppliedAssistant, tts: suppliedTTS } = {}) {
+  claude: suppliedClaude, hermes: suppliedHermes, assistant: suppliedAssistant, tts: suppliedTTS } = {}) {
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await chmod(dataDir, 0o700);
   const certPath = path.join(dataDir, 'server.crt');
@@ -94,13 +95,14 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
   try { allowedApps = validateAllowedApps(JSON.parse(await readFile(allowedAppsPath, 'utf8'))); } catch {}
   const codex = suppliedCodex || new CodexClient(path.join(dataDir, 'codex'), undefined, accountSource, workspace, allowedApps);
   const claude = suppliedClaude || new ClaudeClient(path.join(dataDir, 'camera-frames'), undefined, workspace);
+  const hermes = suppliedHermes || new HermesClient(path.join(dataDir, 'camera-frames'), undefined, workspace);
   const providerPath = path.join(dataDir, 'assistant-provider');
   let provider = 'codex';
   try {
     const saved = (await readFile(providerPath, 'utf8')).trim();
     if (assistantProviders.has(saved)) provider = saved;
   } catch {}
-  const assistant = suppliedAssistant || new AssistantRouter({ codex, claude }, provider);
+  const assistant = suppliedAssistant || new AssistantRouter({ codex, claude, hermes }, provider);
   const tts = suppliedTTS || new KokoroService(dataDir);
   let serviceError = null;
   let loginPending = false;
@@ -150,7 +152,8 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
     try {
       account = await selectProvider(requestedProvider);
       if (!account.signedIn) throw new Error(account.signInMessage ||
-        (requestedProvider === 'claude' ? 'Sign in to Claude Code on the Mac first.' : 'Sign in with ChatGPT on the Mac first.'));
+        (requestedProvider === 'claude' ? 'Sign in to Claude Code on the Mac first.' : requestedProvider === 'hermes'
+          ? 'Install and configure Hermes on the Mac first.' : 'Sign in with ChatGPT on the Mac first.'));
     } catch (error) {
       send({ type: 'error', message: error.message });
       const closeTimer = setTimeout(() => {
@@ -197,7 +200,7 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
         const selectedSource = account.accountSource || assistant.accountSource || accountSource;
         return sendJSON(res, 200, { ...account, provider: selectedProvider, accountSource: selectedSource,
           workspace: assistant.workspace || workspace,
-          workspaceEditable: selectedProvider === 'claude' || selectedSource === 'local',
+          workspaceEditable: selectedProvider !== 'codex' || selectedSource === 'local',
           supportsAppSelection: selectedProvider === 'codex' && selectedSource === 'local',
           error: serviceError, phoneConnected: wss.clients.size > 0,
           hosts, phonePort: phone.address().port, loginPending });
@@ -229,7 +232,9 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
       }
       if (req.method === 'POST' && req.url === '/api/login') {
         if ((assistant.provider || provider) !== 'codex') {
-          throw new Error('Run claude auth login in Terminal to sign in to Claude Code.');
+          throw new Error((assistant.provider || provider) === 'claude'
+            ? 'Run claude auth login in Terminal to sign in to Claude Code.'
+            : 'Configure Hermes from its Mac app or CLI.');
         }
         if ((assistant.accountSource || accountSource) === 'local') {
           throw new Error('RayBridge is using this Mac’s Codex login. Run codex login on this Mac, or switch to a separate RayBridge login.');
@@ -240,7 +245,8 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
         return sendJSON(res, 200, { url: login.authUrl });
       }
       if (req.method === 'POST' && req.url === '/api/logout') {
-        if ((assistant.provider || provider) !== 'codex') throw new Error('Sign out of Claude Code from Terminal.');
+        if ((assistant.provider || provider) !== 'codex') throw new Error((assistant.provider || provider) === 'claude'
+          ? 'Sign out of Claude Code from Terminal.' : 'Manage Hermes accounts from its Mac app or CLI.');
         if ((assistant.accountSource || accountSource) === 'local') {
           throw new Error('Switch to a separate RayBridge login before signing out.');
         }

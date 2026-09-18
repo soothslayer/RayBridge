@@ -9,8 +9,10 @@ flowchart LR
     B --> A{Selected assistant}
     A -->|Local stdio JSON-RPC| C[Codex app server]
     A -->|Streaming CLI process| D[Claude Code]
+    A -->|One-shot resumable CLI process| E[Hermes]
     C <-->|ChatGPT subscription authentication| O[OpenAI]
     D <-->|Claude subscription authentication| H[Anthropic]
+    E <-->|Configured local or hosted model| L[Hermes model provider]
     A -->|Final answer text| B
     B -->|Answer text| I
     I -->|Apple speech synthesis and Bluetooth| S[Glasses speakers]
@@ -42,7 +44,9 @@ The Mac must remain powered, awake, connected to the internet, and reachable on 
 
 Subscription sign-in is implemented through `account/login/start` with `type: chatgpt`. As an alternative, the user can select the Mac's existing Codex login; RayBridge then inherits the normal `CODEX_HOME`, environment, Codex configuration, memories, plugins, and MCP servers. It launches a separate stdio app-server rather than attaching to an arbitrary interactive process. Local threads start in the folder selected on the setup page, use `workspace-write` with network access, and route eligible approvals to automatic review so voice requests can finish without a second interface. The separate-login mode retains the original read-only, tool-free restrictions. `account/read` must identify a ChatGPT account before inference; API-key and other provider accounts are rejected. The bridge uses `thread/start`, `turn/start`, `turn/interrupt`, and final item/turn notifications. Model selection follows the ChatGPT account's default rather than hardcoding an API-only model.
 
-Claude Code uses the CLI login and configuration already present on the Mac. RayBridge invokes print mode with streaming JSON, gives each phone connection its own resumable Claude session, and stages a current camera frame in a private temporary directory when needed. File edits are accepted; actions that require an interactive permission prompt are denied because the glasses session has no secure approval interface. Cancellation terminates the active Claude process. Codex and Claude events are normalized behind the same assistant contract before they reach the phone session.
+Claude Code uses the CLI login and configuration already present on the Mac. RayBridge invokes print mode with streaming JSON, gives each phone connection its own resumable Claude session, and stages a current camera frame in a private temporary directory when needed. File edits are accepted; actions that require an interactive permission prompt are denied because the glasses session has no secure approval interface. Cancellation terminates the active Claude process.
+
+Hermes uses the model, memories, project instructions, tools, plugins, MCP servers, and computer-use configuration already present on the Mac. Each phone connection gets a private named Hermes session and each question runs through quiet one-shot mode with the prompt on standard input. Current images are staged privately and attached with Hermes's image option. Hermes's `approvals.single_query_mode` controls unattended dangerous actions and defaults to deny. Cancellation terminates the active Hermes process. All three backends are normalized behind the same assistant contract before they reach the phone session.
 
 The iPhone stores its selected assistant and sends that choice in the authenticated, certificate-pinned WebSocket handshake. The Mac switches and validates the selected CLI before sending the ready event, then remembers that provider for the Mac setup screen. A failed launch restores the previous backend. An unsigned-in provider returns an error before the camera and microphone start, using the same spoken startup-error path as other connection failures.
 

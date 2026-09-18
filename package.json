@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node bridge/server.mjs",
     "test": "node --test bridge/test/*.test.mjs",
-    "check": "node --check bridge/server.mjs && node --check bridge/assistant.mjs && node --check bridge/codex.mjs && node --check bridge/claude.mjs && node --check bridge/session.mjs && node --check bridge/tts.mjs"
+    "check": "node --check bridge/server.mjs && node --check bridge/assistant.mjs && node --check bridge/codex.mjs && node --check bridge/claude.mjs && node --check bridge/hermes.mjs && node --check bridge/session.mjs && node --check bridge/tts.mjs"
   },
   "dependencies": {
     "kokoro-js": "^1.2.1",
