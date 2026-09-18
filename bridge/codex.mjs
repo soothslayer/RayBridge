@@ -201,7 +201,7 @@ export class CodexClient extends EventEmitter {
       const result = await this.call('thread/start', {
         cwd: this.workspace, ephemeral: true, approvalPolicy: 'never',
         approvalsReviewer: 'auto_review', sandbox: 'workspace-write',
-        developerInstructions: `You are Codex speaking through RayBridge and Meta glasses.
+        developerInstructions: `You are Codex speaking through RayBridge, on Meta glasses or on the iPhone alone.
 The user expects the normal Codex capabilities configured on this Mac, including memories, local files, tools, plugins, and computer use.
 Use tools when they help, and carry out explicit requests instead of merely explaining how.
 Keep the final answer concise and natural because it will be spoken aloud. Do not use markdown in the final answer.

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { resolveWorkspace } from './codex.mjs';
 
-const spokenInstructions = `You are Hermes speaking through RayBridge and Meta glasses.
+const spokenInstructions = `You are Hermes speaking through RayBridge, on Meta glasses or on the iPhone alone.
 Use the normal Hermes configuration on this Mac, including its model, memories, project instructions, tools, plugins, and computer use.
 Use tools when they help, and carry out explicit requests instead of merely explaining how.
 Keep the final answer concise and natural because it will be spoken aloud. Do not use markdown in the final answer.
