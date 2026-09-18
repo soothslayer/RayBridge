@@ -56,12 +56,13 @@ async function refresh() {
     $('phone').textContent = data.phoneConnected ? 'iPhone connected' : 'Waiting for your iPhone';
     const before = $('host').value;
     if ([...$('host').options].map(x => x.value).join() !== data.hosts.join()) {
-      $('host').replaceChildren(...data.hosts.map(host => new Option(host, host)));
+      $('host').replaceChildren(...data.hosts.map(host =>
+        new Option(host === data.magicDNS ? `${host} (Tailscale, works away from home)` : host, host)));
       if (data.hosts.includes(before)) $('host').value = before;
       await pair();
     }
     error(data.error || '');
-    if (!data.hosts.length) error('Connect this Mac to Wi-Fi to pair an iPhone.');
+    if (!data.hosts.length) error('Connect this Mac to Wi-Fi or a tailnet to pair an iPhone.');
     await refreshKokoro();
   } catch (e) { error(e.message); }
 }

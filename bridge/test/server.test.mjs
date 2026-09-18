@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { X509Certificate } from 'node:crypto';
 import http from 'node:http';
 import { WebSocket } from 'ws';
-import { startBridge, authorized } from '../server.mjs';
+import { startBridge, authorized, magicDNSName } from '../server.mjs';
 
 class FakeCodex extends EventEmitter {
   accountSource = 'raybridge';
@@ -226,4 +226,56 @@ test('Mac setup reports and starts the optional Kokoro download', async t => {
   assert.equal(response.status, 202);
   assert.equal((await response.json()).progress, 25);
   assert.equal(started, 1);
+});
+
+test('MagicDNS names are accepted only inside the tailnet .ts.net domain', () => {
+  assert.equal(magicDNSName('mac.tail1234.ts.net.'), 'mac.tail1234.ts.net');
+  assert.equal(magicDNSName('Mac.Tail1234.TS.NET'), 'mac.tail1234.ts.net');
+  assert.equal(magicDNSName('my-mac.tailnet-name.ts.net'), 'my-mac.tailnet-name.ts.net');
+  for (const value of ['', 'ts.net', '.ts.net', 'mac..ts.net', 'localhost', 'example.com',
+    'bridge.ngrok.io', 'mac.tail1234.ts.net.evil.com', '-mac.tail1234.ts.net', 'mac-.tail1234.ts.net',
+    'mac_1.tail1234.ts.net', 'mac.tail1234.ts.network', undefined, null, 42,
+    `${'m'.repeat(64)}.tail1234.ts.net`, `${Array(4).fill('m'.repeat(63)).join('.')}.ts.net`])
+    assert.equal(magicDNSName(value), null, `Expected to reject ${String(value)}`);
+});
+
+test('Pairing offers this Mac\'s MagicDNS name and refuses any other host', async t => {
+  const dataDir = await mkdtemp('/tmp/raybridge-magicdns-test-');
+  let lookups = 0;
+  const tailnetProvider = async () => { lookups += 1; return 'mac.tail1234.ts.net'; };
+  const bridge = await startBridge({ dataDir, adminPort: 0, phonePort: 0, codex: new FakeCodex(), tailnetProvider });
+  t.after(async () => { await bridge.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const admin = `http://127.0.0.1:${bridge.admin.address().port}`;
+
+  const status = await (await fetch(`${admin}/api/status`)).json();
+  assert.equal(status.magicDNS, 'mac.tail1234.ts.net');
+  assert.ok(status.hosts.includes('mac.tail1234.ts.net'));
+
+  const paired = await (await fetch(`${admin}/api/pair?host=mac.tail1234.ts.net`)).json();
+  assert.ok(paired.link.startsWith('raybridge://pair?'));
+  assert.equal(new URL(paired.link).searchParams.get('host'), 'mac.tail1234.ts.net');
+  assert.ok(paired.qr.startsWith('data:image/png;base64,'));
+
+  for (const host of ['bridge.ngrok.io', 'other.tail1234.ts.net', '8.8.8.8'])
+    assert.equal((await fetch(`${admin}/api/pair?host=${host}`)).status, 400);
+
+  // The setup page polls status every few seconds, so the lookup is cached.
+  await fetch(`${admin}/api/status`);
+  await fetch(`${admin}/api/status`);
+  assert.equal(lookups, 1);
+});
+
+test('Pairing still works when Tailscale is not installed', async t => {
+  const dataDir = await mkdtemp('/tmp/raybridge-no-tailscale-test-');
+  const bridge = await startBridge({ dataDir, adminPort: 0, phonePort: 0, codex: new FakeCodex(),
+    tailnetProvider: async () => { throw new Error('tailscale is not installed'); } });
+  t.after(async () => { await bridge.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const admin = `http://127.0.0.1:${bridge.admin.address().port}`;
+  const status = await (await fetch(`${admin}/api/status`)).json();
+  assert.equal(status.magicDNS, null);
+  assert.ok(status.hosts.every(host => !host.endsWith('.ts.net')));
+  assert.equal((await fetch(`${admin}/api/pair?host=mac.tail1234.ts.net`)).status, 400);
+  // A missing or empty host must not pair just because there is no tailnet name.
+  assert.equal((await fetch(`${admin}/api/pair?other=1`)).status, 400);
+  assert.equal((await fetch(`${admin}/api/pair?host=`)).status, 400);
 });

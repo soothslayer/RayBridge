@@ -1,13 +1,30 @@
 import Foundation
 
-// Hosts RayBridge will pair with. The Mac bridge is never published to the public
-// internet: it is reached either on the private LAN or over a tailnet, where
-// Tailscale carries the Mac's own certificate unchanged so the paired fingerprint
-// still authenticates the Mac end to end.
+// Hosts RayBridge will pair with: a private LAN address, or a tailnet address or
+// MagicDNS name. The Mac bridge is never published to the public internet. Tailscale
+// carries the Mac's own certificate unchanged, so the paired fingerprint still
+// authenticates the Mac end to end over a tailnet.
 enum PairingHostPolicy {
     static func isAllowedHost(_ host: String) -> Bool {
-        guard let octets = octets(host) else { return false }
-        return isPrivateLAN(octets) || isLinkLocal(octets) || isTailscale(octets)
+        if let octets = octets(host) {
+            return isPrivateLAN(octets) || isLinkLocal(octets) || isTailscale(octets)
+        }
+        return isMagicDNSName(host)
+    }
+
+    // A MagicDNS name is fully qualified inside the tailnet's own .ts.net domain and
+    // resolves only for devices on that tailnet, so accepting this one domain cannot
+    // point the app at a public tunnel endpoint. The certificate fingerprint, not the
+    // name, is what authenticates the Mac.
+    static func isMagicDNSName(_ host: String) -> Bool {
+        let name = host.lowercased()
+        guard name.count <= 253, name.hasSuffix(".ts.net") else { return false }
+        let labels = name.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count >= 3 else { return false }
+        return labels.allSatisfy { label in
+            (1...63).contains(label.count) && label.first != "-" && label.last != "-" &&
+                label.allSatisfy { ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "-" }
+        }
     }
 
     // Canonical dotted-quad IPv4 only. Leading zeros are rejected so an octet

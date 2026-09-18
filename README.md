@@ -97,10 +97,12 @@ RayBridge can reach the Mac from outside the house over a [tailnet](https://tail
 
 1. Install Tailscale on the Mac and the iPhone and sign both into the same tailnet.
 2. Leave RayBridge running on the Mac. It already listens on every interface, so no bridge setting changes.
-3. On the Mac setup page, select the Mac's tailnet address (`100.x.y.z`) in the host list instead of its Wi-Fi address, then pair the iPhone with that QR code or link.
+3. On the Mac setup page, select the Mac's tailnet entry in the host list instead of its Wi-Fi address, then pair the iPhone with that QR code or link. With MagicDNS enabled, the list shows the Mac's name, such as `mac.tail1234.ts.net`, marked **(Tailscale, works away from home)**. Without it, the list shows the Mac's tailnet address (`100.x.y.z`).
 4. Keep the Mac awake and online. Closing the lid or letting it sleep ends the session, and away from home there is nobody there to wake it.
 
-Pair over the tailnet address to use RayBridge both at home and away; it works on the local network too. The iPhone accepts private LAN, link-local, and tailnet (100.64.0.0/10) addresses only. Public addresses and hostnames, including MagicDNS names, are rejected. Re-pair if the Mac's tailnet address changes.
+Prefer the MagicDNS name when Tailscale offers one. A tailnet address can change when the Mac re-authenticates or the node is reset, and the phone would then need re-pairing; the MagicDNS name follows the Mac. RayBridge reads the name from the `tailscale` CLI and offers only this Mac's own name, so nothing else can be written into a pairing link.
+
+Pair over the tailnet entry to use RayBridge both at home and away; it works on the local network too. The iPhone accepts private LAN addresses, link-local addresses, tailnet addresses (100.64.0.0/10), and MagicDNS names under `.ts.net`. Public addresses and every other hostname are rejected.
 
 Expect a modest latency increase for visual questions: the one attached camera frame is up to 500 KB and takes longer to upload over cellular than over Wi-Fi. Frame freshness is measured when the Mac receives the frame, so a slow upload does not discard it.
 
@@ -109,7 +111,7 @@ Do not expose the bridge through a public tunnel such as ngrok or Tailscale Funn
 ## Data and connection behavior
 
 - Mac setup is served only on loopback port 8844. Phone traffic uses TLS on port 8845 and an unpredictable bearer token. The iPhone pins the Mac's certificate fingerprint from pairing; it does not globally disable certificate checks.
-- One phone can connect at a time. **Disconnect and replace pairing link** revokes the old token and disconnects the phone. Re-pair if the Mac's address or certificate changes. IPv4 private LAN addresses and Tailscale tailnet addresses (100.64.0.0/10) are supported; public addresses, hostnames, Bonjour discovery, and IPv6 are not.
+- One phone can connect at a time. **Disconnect and replace pairing link** revokes the old token and disconnects the phone. Re-pair if the Mac's address or certificate changes. IPv4 private LAN addresses, Tailscale tailnet addresses (100.64.0.0/10), and Tailscale MagicDNS names under `.ts.net` are supported; public addresses, all other hostnames, Bonjour discovery, and IPv6 are not. The `.ts.net` App Transport Security exception in `Info.plist` lets the app present the Mac's own certificate for pinning; it does not disable TLS or relax the pin.
 - Meta streams camera frames to the iPhone. The app samples up to one JPEG per second locally and retains the most recent one in memory. A question sends that frame to the Mac only if it is recent. The Mac keeps one frame and rejects stale visual context. Idle streaming does not continuously submit model turns.
 - Audio is transcribed on the iPhone. Question text and an optional JPEG travel to the selected assistant through its Mac CLI. That CLI's configured model provider receives the request; Hermes may use a local or hosted model depending on its Mac configuration. Answers return as text for Apple speech or, when selected, as audio generated locally by Kokoro on the Mac. The Kokoro model is downloaded from Hugging Face and does not receive the question or answer over a hosted speech API.
 - By default, Codex uses an app-specific profile under `~/Library/Application Support/RayBridge/codex` and remains a restricted visual assistant. **Use this Mac’s Codex login** starts a separate app-server connection that reuses the login and normal configuration in `CODEX_HOME` or `~/.codex`, including memories, tools, plugins, MCP servers, browser, and computer use. Local mode defaults its working folder to the Mac user’s home folder; change it on the Mac setup page to narrow file access. The same page lists installed apps so the user can explicitly choose which ones spoken Computer Use requests may operate. Saved choices apply to new phone sessions. Turns use a writable workspace sandbox with network access and automatic approval review. Direct requests that still require a person at the Mac are declined. RayBridge chooses the newest working Codex executable installed with ChatGPT, Codex, or the CLI, then falls back to its bundled executable. Set `RAYBRIDGE_LOCAL_CODEX` to force an executable or `RAYBRIDGE_WORKSPACE` to set the initial working folder. RayBridge never reads or copies credentials, does not attach to another client’s live transport or conversation, and cannot sign the shared account out. The local TLS key remains in the RayBridge application-support directory.
@@ -126,7 +128,7 @@ xcodebuild -project ios/RayBridge.xcodeproj -scheme RayBridge \
   -derivedDataPath .build/ios CODE_SIGNING_ALLOWED=NO build
 ```
 
-Automated tests exercise authentication, admin-origin/Host protection, TLS/WebSocket transport, a simulated phone question/answer, token revocation, subscription enforcement, stale/missing images, overlapping questions, final-answer filtering, disconnect cancellation, Kokoro installation, audio delivery, Apple fallback, and cancellation races during turn startup and audio generation. The Codex subprocess initialization/account-read smoke check also passed with a fresh signed-out profile.
+Automated tests exercise authentication, admin-origin/Host protection, MagicDNS name validation and tailnet pairing, TLS/WebSocket transport, a simulated phone question/answer, token revocation, subscription enforcement, stale/missing images, overlapping questions, final-answer filtering, disconnect cancellation, Kokoro installation, audio delivery, Apple fallback, and cancellation races during turn startup and audio generation. The Codex subprocess initialization/account-read smoke check also passed with a fresh signed-out profile.
 
 After sign-in through the Mac UI, a live ChatGPT Plus test sent a generated blue rectangle containing a white 7 through the same Codex adapter and conversation handler. It correctly returned **“Blue 7”**, approximately 7 seconds after subprocess startup. This validates account authentication and image inference, not iPhone speech latency or physical glasses behavior. Mac UI launch/pairing-copy, the iPhone simulator build, and the unsigned physical-iPhone build passed. The runtime requires current named permission profiles; the retired `readOnly.access` field is not used.
 
@@ -148,7 +150,7 @@ The remaining work to achieve the original fully real-time experience is substan
 
 On a Mac with Xcode installed, run `bash scripts/test-ios-session.sh`. The hardware-independent Swift tests cover startup ordering, waiting for camera readiness before audio, duplicate taps, full teardown, and Stop or failure during each startup stage. These checks do not replace physical-glasses testing.
 
-`bash scripts/test-ios-pairing-host.sh` covers the pairing host rule: private LAN, link-local, and tailnet addresses are accepted, while public addresses, the ranges just outside 100.64.0.0/10, hostnames, and malformed or leading-zero quads are rejected.
+`bash scripts/test-ios-pairing-host.sh` covers the pairing host rule: private LAN, link-local, and tailnet addresses and `.ts.net` MagicDNS names are accepted, while public addresses, the ranges just outside 100.64.0.0/10, every other hostname, and malformed labels or leading-zero quads are rejected.
 
 For the unified Start/Stop flow, verify on the iPhone:
 
