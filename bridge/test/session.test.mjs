@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { PhoneSession, validJPEG } from '../session.mjs';
+import { PhoneSession, splitSpokenChunk, validJPEG } from '../session.mjs';
 
 class FakeCodex extends EventEmitter {
-  calls = []; signedIn = true;
-  async account() { return { signedIn: this.signedIn }; }
+  calls = []; signedIn = true; accountReads = 0;
+  async account() { this.accountReads += 1; return { signedIn: this.signedIn }; }
   async newThread() { this.calls.push(['thread']); return 'thread-1'; }
   async ask(thread, text, frame) { this.calls.push(['ask', thread, text, frame]); return { turn: { id: 'turn-1' } }; }
   async call(method, params) { this.calls.push([method, params]); }
@@ -14,7 +14,8 @@ const jpeg = Buffer.from([255, 216, 0, 255, 217]).toString('base64');
 function setup(options = {}) {
   const codex = new FakeCodex(), output = [];
   let time = 10000;
-  const session = new PhoneSession(codex, event => output.push(event), { now: () => time, ...options });
+  const session = new PhoneSession(codex, event => output.push(event), {
+    now: () => time, log: () => {}, ...options });
   return { codex, output, session, advance: ms => { time += ms; } };
 }
 test('validates camera input and bounds payloads', () => {
@@ -172,4 +173,85 @@ test('Cancel interrupts a known turn only once while its start response is pendi
   await Promise.all([asking, cancelling]);
   assert.equal(codex.calls.filter(x => x[0] === 'turn/interrupt').length, 1);
   assert.equal(output.at(-1).type, 'cancelled');
+});
+
+test('a sentence is only released once it has finished', () => {
+  assert.deepEqual(splitSpokenChunk('The sign says'), ['', 'The sign says']);
+  assert.deepEqual(splitSpokenChunk('It is a door. It is'), ['It is a door. ', 'It is']);
+  assert.deepEqual(splitSpokenChunk('Two lines\nand more'), ['Two lines\n', 'and more']);
+  assert.deepEqual(splitSpokenChunk('Is it open? Yes! '), ['Is it open? Yes! ', '']);
+});
+test('finished sentences are spoken before the turn completes, without repeating them', async t => {
+  const { codex, session, output } = setup(); t.after(() => session.close());
+  await session.receive({ type: 'ask', text: 'What is there?' });
+  const delta = text => codex.emit('notification', { method: 'item/delta', params: {
+    threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', phase: 'final_answer', text } } });
+  delta('A red door');
+  assert.equal(output.filter(event => event.type === 'answer.partial').length, 0);
+  delta('A red door. It is');
+  delta('A red door. It is closed.\n');
+  assert.deepEqual(output.filter(event => event.type === 'answer.partial').map(event => event.text),
+    ['A red door. ', 'It is closed.\n']);
+  codex.emit('notification', { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+  assert.equal(output.at(-1).type, 'error');
+});
+test('replaced text is withdrawn so preparation is never spoken as the answer', async t => {
+  const { codex, session, output } = setup(); t.after(() => session.close());
+  await session.receive({ type: 'ask', text: 'Read this' });
+  const delta = text => codex.emit('notification', { method: 'item/delta', params: {
+    threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', phase: 'final_answer', text } } });
+  delta('Let me look. ');
+  codex.emit('notification', { method: 'item/discarded', params: { threadId: 'thread-1', turnId: 'turn-1' } });
+  assert.equal(output.at(-1).type, 'answer.discard');
+  delta('The sign says closed. ');
+  assert.deepEqual(output.at(-1), { type: 'answer.partial', text: 'The sign says closed. ' });
+  // Shrinking text is a replacement too, even without an explicit withdrawal.
+  delta('Short');
+  assert.equal(output.at(-1).type, 'answer.discard');
+});
+test('Kokoro answers are not streamed because the Mac generates one audio file', async t => {
+  const { codex, session, output } = setup({ tts: { synthesize: async () => ({ format: 'm4a', data: 'YXVkaW8=' }) } });
+  t.after(() => session.close());
+  await session.receive({ type: 'ask', text: 'Hello', ttsEngine: 'kokoro' });
+  codex.emit('notification', { method: 'item/delta', params: {
+    threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', text: 'A finished sentence. ' } } });
+  assert.equal(output.some(event => event.type === 'answer.partial'), false);
+});
+test('a proven account is reused instead of read before every question', async t => {
+  const { codex, session, advance } = setup({ account: { signedIn: true }, accountCacheMs: 60000 });
+  t.after(() => session.close());
+  await session.receive({ type: 'ask', text: 'First' });
+  assert.equal(codex.accountReads, 0);
+  session.cancel();
+  await session.receive({ type: 'ask', text: 'Second' });
+  assert.equal(codex.accountReads, 0);
+  advance(60001);
+  session.cancel();
+  await session.receive({ type: 'ask', text: 'Third' });
+  assert.equal(codex.accountReads, 1);
+});
+test('a failed turn forces the next question to read the account again', async t => {
+  const { codex, session } = setup({ account: { signedIn: true } });
+  t.after(() => session.close());
+  await session.receive({ type: 'ask', text: 'First' });
+  codex.emit('notification', { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'failed' } } });
+  codex.signedIn = false;
+  await assert.rejects(session.receive({ type: 'ask', text: 'Second' }), /Sign in/);
+  assert.equal(codex.accountReads, 1);
+});
+test('turn stages are timed without recording what was asked or answered', async t => {
+  const lines = [];
+  const { codex, session, advance } = setup({ log: line => lines.push(line) });
+  t.after(() => session.close());
+  await session.receive({ type: 'ask', text: 'A private question' });
+  advance(40);
+  codex.emit('notification', { method: 'item/delta', params: {
+    threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', text: 'A private answer. ' } } });
+  advance(10);
+  codex.emit('notification', { method: 'item/completed', params: {
+    threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', text: 'A private answer.' } } });
+  codex.emit('notification', { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /firstSpokenSentence=40 answerComplete=50/);
+  assert.equal(/private/.test(lines[0]), false);
 });

@@ -40,6 +40,10 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     private var resumeAudioAfterConfirmation = false
     private var resumeHeartbeatAfterConfirmation = false
     private var answerPlayer: AVAudioPlayer?
+    // Sentences of an answer that is still being written. Listening resumes only
+    // once the last queued sentence has been spoken and the answer is complete.
+    private var streamedUtterances: [AVSpeechUtterance] = []
+    private var streamedAnswerComplete = true
     private enum CueAction { case startListening, submit(String) }
     private var cuePlayer: AVAudioPlayer?
     private var cueAction: CueAction?
@@ -320,6 +324,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
             }
         } else {
             spokenUtterance = nil
+            clearStreamedAnswer()
             synthesizer.stopSpeaking(at: .immediate)
             answerPlayer?.stop()
             answerPlayer = nil
@@ -348,9 +353,53 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         heartbeatPlayer?.stop()
         heartbeatPlayer = nil
     }
+    // Speak one finished sentence of an answer that the Mac is still writing.
+    // Later sentences queue behind it rather than cutting it off.
+    func speakStreamedChunk(_ text: String, listenForCommands commands: Set<VoiceCommand> = []) throws {
+        // Only the first sentence of an answer takes over the audio route; the
+        // rest queue behind it even if the queue briefly drained.
+        let continuing = !streamedAnswerComplete
+        if !continuing {
+            cancelCue()
+            stopThinkingHeartbeat()
+            stopListening()
+            answerPlayer?.stop()
+            answerPlayer = nil
+            if synthesizer.isSpeaking {
+                spokenUtterance = nil
+                synthesizer.stopSpeaking(at: .immediate)
+            }
+            try audioSession()
+            guard allowPhoneAudio || hasBluetoothRoute else {
+                throw BridgeError.message("Glasses audio disconnected. The answer is available on screen.")
+            }
+        }
+        streamedAnswerComplete = false
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = voiceIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:))
+            ?? AVSpeechSynthesisVoice(language: "en-US")
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        if !continuing, !commands.isEmpty { try startCommandListening(for: commands) }
+        streamedUtterances.append(utterance)
+        synthesizer.speak(utterance)
+    }
+    // The Mac finished the answer. Listening resumes when the queue drains.
+    func finishStreamedAnswer() {
+        guard !streamedAnswerComplete else { return }
+        streamedAnswerComplete = true
+        if streamedUtterances.isEmpty { onFinishedSpeaking?() }
+    }
+    // The assistant replaced what it was writing, so stop mid-answer and wait.
+    func cancelStreamedAnswer() {
+        guard !streamedUtterances.isEmpty || !streamedAnswerComplete else { return }
+        streamedUtterances.removeAll()
+        streamedAnswerComplete = true
+        synthesizer.stopSpeaking(at: .immediate)
+    }
     func speak(_ text: String, listenForCommands commands: Set<VoiceCommand> = []) throws {
         cancelCue()
         stopThinkingHeartbeat()
+        clearStreamedAnswer()
         stopListening()
         answerPlayer?.stop()
         answerPlayer = nil
@@ -373,6 +422,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     func speakAudio(_ data: Data, listenForCommands commands: Set<VoiceCommand> = []) throws {
         cancelCue()
         stopThinkingHeartbeat()
+        clearStreamedAnswer()
         stopListening()
         if synthesizer.isSpeaking {
             spokenUtterance = nil
@@ -396,6 +446,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     }
     func stop() {
         cancelConfirmation()
+        clearStreamedAnswer()
         spokenUtterance = nil
         answerPlayer?.stop()
         answerPlayer = nil
@@ -425,6 +476,10 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         case .submit(let question): onQuestion?(question)
         case nil: break
         }
+    }
+    private func clearStreamedAnswer() {
+        streamedUtterances.removeAll()
+        streamedAnswerComplete = true
     }
     private func cancelCue() {
         cueAction = nil
@@ -471,6 +526,12 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
                 self.finishConfirmation(utterance)
                 return
             }
+            if let index = self.streamedUtterances.firstIndex(where: { $0 === utterance }) {
+                self.streamedUtterances.remove(at: index)
+                // More sentences may still arrive, so wait for the finished answer.
+                if self.streamedUtterances.isEmpty, self.streamedAnswerComplete { self.onFinishedSpeaking?() }
+                return
+            }
             guard self.spokenUtterance === utterance else { return }
             self.spokenUtterance = nil
             self.onFinishedSpeaking?()
@@ -480,7 +541,10 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         Task { @MainActor in
             if synthesizer === self.confirmationSynthesizer {
                 self.finishConfirmation(utterance)
+                return
             }
+            // A cancelled sentence never resumes listening by itself.
+            self.streamedUtterances.removeAll { $0 === utterance }
         }
     }
 
