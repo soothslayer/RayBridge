@@ -162,7 +162,9 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
       closeTimer.unref();
       return;
     }
-    const session = new PhoneSession(assistant, send, { tts });
+    // The handshake above already read the account, so the session starts with
+    // that result instead of re-reading it for the first question.
+    const session = new PhoneSession(assistant, send, { tts, account });
     phones.set(ws, session);
     let windowStart = Date.now(), count = 0;
     ws.on('message', async (data, binary) => {

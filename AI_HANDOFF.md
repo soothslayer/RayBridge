@@ -1,6 +1,16 @@
 # RayBridge handoff
 
-Updated September 17, 2026.
+Updated September 18, 2026.
+
+## Active: response latency
+
+- Branch `claude/slow-response-times-toq56q` addresses the first three items of a latency review. No timing has been measured on real hardware yet; these changes exist so that the next physical session can be measured rather than guessed at.
+- **Stage timings.** `bridge/timing.mjs` records each turn's stages on the Mac, and `RayBridgeDiagnostics.timing` records the phone's own stages. Both write fixed labels and integer milliseconds; questions, answers, images, identifiers, and account details are never recorded.
+- **A proven sign-in is reused.** The connection handshake already reads the account, so `PhoneSession` starts from that result and reuses it for five minutes. Previously every question paid for a `claude auth status` or `hermes --version` subprocess, or a Codex RPC, before inference could start. A failed turn drops the cached result so a sign-out is still reported.
+- **Answers are spoken as they are written.** New `answer.partial` and `answer.discard` events carry finished sentences to the phone, which queues them for speech and then speaks only what is left when the completed answer arrives. Claude Code text comes from `--include-partial-messages` streaming events, requested only when the installed CLI offers the flag; Hermes streams its quiet one-shot output. Codex is handled if it ever sends `item/updated`, and is otherwise unchanged. Kokoro answers are not streamed because the Mac generates one audio file from the finished text.
+- Text written before the assistant calls a tool is withdrawn rather than spoken, since that is preparation and not the answer. The Claude and Hermes system prompts now also ask for no narration. Two withdrawals in a turn stop streaming for that turn instead of stuttering.
+- 48 backend tests and the backend syntax checks pass. The Claude streaming parser was written against real `claude --print --output-format stream-json --include-partial-messages` output. **Nothing on the iPhone has been compiled or run**: this session had no macOS, Xcode, or Swift toolchain. The iOS changes in `AppModel`, `SpeechController`, and the new `AnswerStreamPolicy` still need a device build, `bash scripts/test-ios-answer-stream.sh`, and physical glasses testing.
+- Not done from the same review: a warm assistant process instead of one per question, attaching the camera image without the separate Read step, adaptive end-of-speech timing, sending camera frames while listening rather than at ask time, streamed Kokoro synthesis, and background audio so a session survives the phone going in a pocket.
 
 ## Active: Claude Code provider
 
