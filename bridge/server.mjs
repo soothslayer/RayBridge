@@ -139,12 +139,19 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
   const wss = new WebSocketServer({ noServer: true, maxPayload: 700_000, perMessageDeflate: false });
   try { await assistant.start(); } catch (error) { serviceError = error.message; }
   const phones = new Map();
-  let tailnet = null, tailnetCheckedAt = 0;
+  let tailnet = null, tailnetCheckedAt = 0, tailnetLookup = null;
   const tailnetName = async () => {
+    if (tailnetLookup) return tailnetLookup;
     if (tailnetCheckedAt && Date.now() - tailnetCheckedAt < 30000) return tailnet;
-    tailnetCheckedAt = Date.now();
-    try { tailnet = await tailnetProvider(); } catch { tailnet = null; }
-    return tailnet;
+    // Share discovery with overlapping requests; cache only completed results.
+    tailnetLookup = Promise.resolve().then(() => tailnetProvider())
+      .then(name => { tailnet = name; }, () => { tailnet = null; })
+      .then(() => {
+        tailnetCheckedAt = Date.now();
+        tailnetLookup = null;
+        return tailnet;
+      });
+    return tailnetLookup;
   };
   const sendJSON = (res, status, data) => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });

@@ -265,6 +265,28 @@ test('Pairing offers this Mac\'s MagicDNS name and refuses any other host', asyn
   assert.equal(lookups, 1);
 });
 
+test('Concurrent status and pairing requests wait for the same tailnet lookup', async t => {
+  const dataDir = await mkdtemp('/tmp/raybridge-tailnet-race-');
+  let finishLookup, markStarted, lookups = 0;
+  const started = new Promise(resolve => { markStarted = resolve; });
+  const lookup = new Promise(resolve => { finishLookup = resolve; });
+  const bridge = await startBridge({ dataDir, adminPort: 0, phonePort: 0, codex: new FakeCodex(),
+    tailnetProvider: () => { lookups += 1; markStarted(); return lookup; } });
+  t.after(async () => { finishLookup('mac.tail1234.ts.net'); await bridge.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const admin = `http://127.0.0.1:${bridge.admin.address().port}`;
+  const first = fetch(`${admin}/api/status`).then(res => res.json());
+  await started;
+  const paired = fetch(`${admin}/api/pair?host=mac.tail1234.ts.net`);
+  const second = fetch(`${admin}/api/status`).then(res => res.json());
+  // Let both overlapping requests reach the server while discovery is pending.
+  await new Promise(resolve => setTimeout(resolve, 100));
+  finishLookup('mac.tail1234.ts.net');
+  assert.equal((await paired).status, 200);
+  assert.equal((await first).magicDNS, 'mac.tail1234.ts.net');
+  assert.equal((await second).magicDNS, 'mac.tail1234.ts.net');
+  assert.equal(lookups, 1);
+});
+
 test('Pairing still works when Tailscale is not installed', async t => {
   const dataDir = await mkdtemp('/tmp/raybridge-no-tailscale-test-');
   const bridge = await startBridge({ dataDir, adminPort: 0, phonePort: 0, codex: new FakeCodex(),
