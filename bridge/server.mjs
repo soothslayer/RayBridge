@@ -59,9 +59,38 @@ export async function installedApplications() {
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// Tailscale installs its CLI in one of these places depending on how it was installed.
+const tailscaleBinaries = ['/Applications/Tailscale.app/Contents/MacOS/Tailscale',
+  '/usr/local/bin/tailscale', '/opt/homebrew/bin/tailscale'];
+
+// MagicDNS names are fully qualified inside the tailnet's own .ts.net domain. Accepting
+// only that domain keeps a pairing link from naming a public tunnel endpoint.
+export function magicDNSName(value) {
+  if (typeof value !== 'string') return null;
+  const name = value.replace(/\.$/, '').toLowerCase();
+  if (name.length > 253 || !name.endsWith('.ts.net')) return null;
+  const labels = name.split('.');
+  if (labels.length < 3) return null;
+  const label = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+  return labels.every(part => label.test(part)) ? name : null;
+}
+
+// This Mac's own MagicDNS name, or null when Tailscale or MagicDNS is not in use.
+export async function tailscaleName() {
+  for (const binary of tailscaleBinaries) {
+    let stdout;
+    try { ({ stdout } = await execFileAsync(binary, ['status', '--json'], { maxBuffer: 4 * 1024 * 1024, timeout: 5000 })); }
+    catch { continue; }
+    // The daemon answered, so a second binary would only repeat it.
+    try { return magicDNSName(JSON.parse(stdout)?.Self?.DNSName); } catch { return null; }
+  }
+  return null;
+}
+
 export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || path.join(os.homedir(), 'Library/Application Support/RayBridge'),
   adminPort = 8844, phonePort = 8845, codex: suppliedCodex, applicationProvider = installedApplications,
-  claude: suppliedClaude, hermes: suppliedHermes, assistant: suppliedAssistant, tts: suppliedTTS } = {}) {
+  claude: suppliedClaude, hermes: suppliedHermes, assistant: suppliedAssistant, tts: suppliedTTS,
+  tailnetProvider = tailscaleName } = {}) {
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await chmod(dataDir, 0o700);
   const certPath = path.join(dataDir, 'server.crt');
@@ -110,6 +139,20 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
   const wss = new WebSocketServer({ noServer: true, maxPayload: 700_000, perMessageDeflate: false });
   try { await assistant.start(); } catch (error) { serviceError = error.message; }
   const phones = new Map();
+  let tailnet = null, tailnetCheckedAt = 0, tailnetLookup = null;
+  const tailnetName = async () => {
+    if (tailnetLookup) return tailnetLookup;
+    if (tailnetCheckedAt && Date.now() - tailnetCheckedAt < 30000) return tailnet;
+    // Share discovery with overlapping requests; cache only completed results.
+    tailnetLookup = Promise.resolve().then(() => tailnetProvider())
+      .then(name => { tailnet = name; }, () => { tailnet = null; })
+      .then(() => {
+        tailnetCheckedAt = Date.now();
+        tailnetLookup = null;
+        return tailnet;
+      });
+    return tailnetLookup;
+  };
   const sendJSON = (res, status, data) => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(data));
@@ -195,7 +238,9 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
     try {
       if (req.method === 'GET' && req.url === '/api/status') {
         const account = serviceError ? { signedIn: false, provider: assistant.provider } : await assistant.account();
-        const hosts = Object.values(os.networkInterfaces()).flat().filter(x => x && x.family === 'IPv4' && !x.internal).map(x => x.address);
+        const magicDNS = await tailnetName();
+        const hosts = [...Object.values(os.networkInterfaces()).flat().filter(x => x && x.family === 'IPv4' && !x.internal).map(x => x.address),
+          ...(magicDNS ? [magicDNS] : [])];
         const selectedProvider = account.provider || assistant.provider || provider;
         const selectedSource = account.accountSource || assistant.accountSource || accountSource;
         return sendJSON(res, 200, { ...account, provider: selectedProvider, accountSource: selectedSource,
@@ -203,13 +248,15 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
           workspaceEditable: selectedProvider !== 'codex' || selectedSource === 'local',
           supportsAppSelection: selectedProvider === 'codex' && selectedSource === 'local',
           error: serviceError, phoneConnected: wss.clients.size > 0,
-          hosts, phonePort: phone.address().port, loginPending });
+          hosts, magicDNS, phonePort: phone.address().port, loginPending });
       }
       if (req.method === 'GET' && req.url?.startsWith('/api/pair?')) {
-        const hostIP = new URL(req.url, ownOrigin).searchParams.get('host');
+        const chosen = new URL(req.url, ownOrigin).searchParams.get('host');
         const addresses = Object.values(os.networkInterfaces()).flat().filter(Boolean).map(x => x.address);
-        if (!addresses.includes(hostIP)) throw new Error('Choose a local network address.');
-        const link = `raybridge://pair?${new URLSearchParams({ host: hostIP, port: String(phone.address().port), token, fingerprint })}`;
+        // A missing host must not compare equal to an absent tailnet name.
+        if (!chosen || (!addresses.includes(chosen) && chosen !== await tailnetName()))
+          throw new Error('Choose a local network address or this Mac’s tailnet name.');
+        const link = `raybridge://pair?${new URLSearchParams({ host: chosen, port: String(phone.address().port), token, fingerprint })}`;
         return sendJSON(res, 200, { link, qr: await QRCode.toDataURL(link, { width: 320, margin: 2 }) });
       }
       if (req.method === 'GET' && req.url === '/api/apps') {

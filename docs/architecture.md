@@ -5,7 +5,7 @@ flowchart LR
     G[Meta glasses camera] -->|Meta DAT 0.6.0 stream| I[iPhone app]
     M[Glasses microphone] -->|iOS Bluetooth audio| I
     I -->|On-device speech recognition| Q[Question and fresh JPEG]
-    Q -->|Pinned TLS WebSocket over Wi-Fi| B[Mac bridge]
+    Q -->|Pinned TLS WebSocket over Wi-Fi or tailnet| B[Mac bridge]
     B --> A{Selected assistant}
     A -->|Local stdio JSON-RPC| C[Codex app server]
     A -->|Streaming CLI process| D[Claude Code]
@@ -21,6 +21,8 @@ flowchart LR
 ## Phone connection
 
 Connect to `wss://<private-ip>:8845/v1/connect` using `Authorization: Bearer <paired-token>`. Verify the SHA-256 digest of the leaf certificate against the paired fingerprint. No token belongs in a WebSocket URL. Browser Origin headers are rejected. Frame payloads are capped and compression is disabled.
+
+The paired host must be an IPv4 dotted quad in a private LAN range (10/8, 172.16/12, 192.168/16), the link-local range (169.254/16), or the shared range Tailscale uses for tailnet addresses (100.64/10), or a Tailscale MagicDNS name under `.ts.net`. Public addresses and all other hostnames are rejected, so the bridge cannot be paired to a public tunnel endpoint. The Mac reads its own MagicDNS name from `tailscale status --json` (`Self.DNSName`), caches it for 30 seconds against the setup page's polling, and `/api/pair` accepts only an address on one of its interfaces or that one name. Because the pinned certificate rather than the name authenticates the Mac, the self-signed certificate needs no `.ts.net` subject name; the iPhone carries an App Transport Security exception for `.ts.net` so the pinning delegate is reached, which relaxes neither TLS nor the pin. A tailnet is an encrypted point-to-point tunnel that carries the Mac's own certificate unchanged, so remote access keeps the same pinned, token-authenticated connection as the LAN path. A tunnel that terminates TLS at a third-party edge, such as ngrok or Tailscale Funnel, would break pinning and disclose the token, questions, images, and answers to the tunnel operator.
 
 Phone messages:
 
@@ -40,7 +42,7 @@ The iPhone checks that the source frame is at most 2.5 seconds old **before** tr
 
 Only the completed final assistant message is spoken. Intermediate commentary and reasoning are ignored. That is simpler than incremental sentence speech, but incurs extra response delay. Microphone recognition is paused until synthesis finishes. Voice interruption and a glasses hardware wake gesture are not implemented. The user can stop via the iPhone's accessible Stop control.
 
-The Mac must remain powered, awake, connected to the internet, and reachable on the same Wi-Fi network. Router client isolation or blocked incoming local connections prevent pairing. The phone protocol does not expose file access endpoints or arbitrary app-server RPC. In local Codex mode, a spoken request can cause Codex to use the files, tools, plugins, and computer-use services already configured on the Mac. The loopback-only setup page controls the working folder and the installed apps available to Computer Use; RayBridge writes that allowed-app list into each new Codex task.
+The Mac must remain powered, awake, connected to the internet, and reachable on the same Wi-Fi network or tailnet. Router client isolation or blocked incoming local connections prevent pairing. Over a tailnet the Mac is unattended, so sleep or a closed lid ends the session with nobody present to restart it. The phone protocol does not expose file access endpoints or arbitrary app-server RPC. In local Codex mode, a spoken request can cause Codex to use the files, tools, plugins, and computer-use services already configured on the Mac. The loopback-only setup page controls the working folder and the installed apps available to Computer Use; RayBridge writes that allowed-app list into each new Codex task.
 
 Subscription sign-in is implemented through `account/login/start` with `type: chatgpt`. As an alternative, the user can select the Mac's existing Codex login; RayBridge then inherits the normal `CODEX_HOME`, environment, Codex configuration, memories, plugins, and MCP servers. It launches a separate stdio app-server rather than attaching to an arbitrary interactive process. Local threads start in the folder selected on the setup page, use `workspace-write` with network access, and route eligible approvals to automatic review so voice requests can finish without a second interface. The separate-login mode retains the original read-only, tool-free restrictions. `account/read` must identify a ChatGPT account before inference; API-key and other provider accounts are rejected. The bridge uses `thread/start`, `turn/start`, `turn/interrupt`, and final item/turn notifications. Model selection follows the ChatGPT account's default rather than hardcoding an API-only model.
 
