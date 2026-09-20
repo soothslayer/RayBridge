@@ -708,6 +708,20 @@ final class AppModel: ObservableObject {
         phoneCameraTransition?.cancel(); phoneCameraTransition = nil
         session.stop()
     }
+    func stopFromButton() {
+        guard sessionActive else { return }
+        RayBridgeDiagnostics.event("Stop RayBridge button pressed")
+        status = "Stopping RayBridge…"
+        let announcement = "Stopping RayBridge."
+        UIAccessibility.post(notification: .announcement, argument: announcement)
+        guard !UIAccessibility.isVoiceOverRunning else {
+            stop()
+            return
+        }
+        confirmVoiceCommand(announcement, preservingCurrentOutput: false) { [weak self] in
+            self?.stop()
+        }
+    }
     private func refreshStandbyListening() {
         guard !sessionActive else { return }
         guard appIsActive, voiceCommandsEnabled, handsFreeStandbyEnabled,
