@@ -7,6 +7,40 @@ import path from 'node:path';
 
 export const accountSources = new Set(['raybridge', 'local']);
 
+// Local mode is this Mac's own Codex, driven by someone who cannot see a prompt
+// or type an answer into it. Full access with `never` lets a turn run to the end
+// instead of stalling on approval that will never arrive. The separate RayBridge
+// account below is unchanged: it is the vision-only assistant and has no tools.
+export const localSandboxMode = 'danger-full-access';
+export const localSandboxPolicy = { type: 'dangerFullAccess' };
+
+// Approvals should not be requested at all under that policy. These are the
+// backstop for anything that still asks, so a request cannot leave the user in
+// silence. Values follow the app-server protocol schema.
+export function localServerResponse(method, params = {}) {
+  if (method === 'item/commandExecution/requestApproval' || method === 'item/fileChange/requestApproval')
+    return { decision: 'acceptForSession' };
+  if (method === 'item/permissions/requestApproval') {
+    // Grant exactly what Codex requested. The generated protocol requires both
+    // legacy filesystem keys even when only one side of the request is present.
+    const requested = params.permissions || {};
+    const permissions = {};
+    if (requested.network)
+      permissions.network = { ...requested.network };
+    if (requested.fileSystem)
+      permissions.fileSystem = {
+        ...requested.fileSystem,
+        read: requested.fileSystem.read ?? null,
+        write: requested.fileSystem.write ?? null
+      };
+    return { permissions, scope: 'session' };
+  }
+  // An elicitation asks the user for data rather than for permission, so there
+  // is no answer to invent. Declining lets the turn continue instead of hanging.
+  if (method === 'mcpServer/elicitation/request')
+    return { action: 'decline', content: null, _meta: null };
+}
+
 export function localCodexCandidates(fallback, environment = process.env) {
   if (environment.RAYBRIDGE_LOCAL_CODEX) return [environment.RAYBRIDGE_LOCAL_CODEX];
   const home = environment.HOME || '';
@@ -124,15 +158,14 @@ export class CodexClient extends EventEmitter {
       let message;
       try { message = JSON.parse(line); } catch { return; }
       if (message.method && message.id !== undefined) {
-        // Local turns use automatic approval review. If a tool still requires
-        // direct human input, fail closed instead of silently approving it.
-        const declines = {
-          'item/commandExecution/requestApproval': { decision: 'decline' },
-          'item/fileChange/requestApproval': { decision: 'decline' },
-          'mcpServer/elicitation/request': { action: 'decline', content: null }
-        };
-        if (this.accountSource === 'local' && declines[message.method])
-          this.write({ id: message.id, result: declines[message.method] });
+        // A request that only needs permission is granted here. One that needs a
+        // person to type an answer, such as item/tool/requestUserInput, still
+        // fails closed rather than having an answer invented for them.
+        const response = this.accountSource === 'local'
+          ? localServerResponse(message.method, message.params)
+          : undefined;
+        if (response)
+          this.write({ id: message.id, result: response });
         else this.write({ id: message.id, error: { code: -32601, message: 'This request needs direct confirmation on the Mac.' } });
       } else if (message.id !== undefined) {
         const request = this.pending.get(message.id);
@@ -200,7 +233,7 @@ export class CodexClient extends EventEmitter {
     if (this.accountSource === 'local') {
       const result = await this.call('thread/start', {
         cwd: this.workspace, ephemeral: true, approvalPolicy: 'never',
-        approvalsReviewer: 'auto_review', sandbox: 'workspace-write',
+        sandbox: localSandboxMode,
         developerInstructions: `You are Codex speaking through RayBridge, on Meta glasses or on the iPhone alone.
 The user expects the normal Codex capabilities configured on this Mac, including memories, local files, tools, plugins, and computer use.
 Use tools when they help, and carry out explicit requests instead of merely explaining how.
@@ -231,8 +264,8 @@ Use plain text without markdown. You are using a ChatGPT subscription through Co
     const input = [{ type: 'text', text: question + (frame ? '\nA current camera frame is attached.' : '\nNo current camera image is available.'), text_elements: [] }];
     if (frame) input.push({ type: 'image', url: `data:image/jpeg;base64,${frame}` });
     if (this.accountSource === 'local') return this.call('turn/start', {
-      threadId, input, cwd: this.workspace, approvalPolicy: 'never', approvalsReviewer: 'auto_review',
-      sandboxPolicy: { type: 'workspaceWrite', writableRoots: [this.workspace], networkAccess: true }
+      threadId, input, cwd: this.workspace, approvalPolicy: 'never',
+      sandboxPolicy: localSandboxPolicy
     });
     return this.call('turn/start', { threadId, input, approvalPolicy: 'never' });
   }
