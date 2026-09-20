@@ -22,6 +22,8 @@ private final class PhoneCaptureEngine: NSObject, AVCaptureVideoDataOutputSample
     private let output = AVCaptureVideoDataOutput()
     private let lock = NSLock()
     private var lastSample = Date.distantPast
+    private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
+    private var rotationObservation: NSKeyValueObservation?
     // Read on the capture queue and written from the main actor, so the same
     // lock that rate-limits frames also guards the handler.
     private var frameHandler: (@Sendable (Data) -> Void)?
@@ -76,10 +78,27 @@ private final class PhoneCaptureEngine: NSObject, AVCaptureVideoDataOutputSample
             throw BridgeError.message("The iPhone camera could not start. Close other camera apps and try again.")
         }
         session.addOutput(output)
-        // Deliver upright portrait images, matching how the phone is held.
+        // Keep question images upright when the user rotates the phone. The
+        // coordinator follows gravity and reports changes on the main queue;
+        // apply them on the capture queue with the rest of the session work.
+        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+        rotationCoordinator = coordinator
+        let initialAngle = coordinator.videoRotationAngleForHorizonLevelCapture
         if let connection = output.connection(with: .video),
-           connection.isVideoRotationAngleSupported(90) {
-            connection.videoRotationAngle = 90
+           connection.isVideoRotationAngleSupported(initialAngle) {
+            connection.videoRotationAngle = initialAngle
+        }
+        rotationObservation = coordinator.observe(
+            \.videoRotationAngleForHorizonLevelCapture,
+            options: [.new]
+        ) { [weak self] coordinator, _ in
+            guard let self else { return }
+            let angle = coordinator.videoRotationAngleForHorizonLevelCapture
+            self.queue.async { [weak self] in
+                guard let self, let connection = self.output.connection(with: .video),
+                      connection.isVideoRotationAngleSupported(angle) else { return }
+                connection.videoRotationAngle = angle
+            }
         }
         // One frame per second is retained, so capturing faster only costs battery.
         if (try? device.lockForConfiguration()) != nil {
@@ -177,7 +196,9 @@ final class PhoneCamera: CameraSource {
             try await engine.start()
             capturing = true
             try Task.checkCancellation()
-            onStatus?("Waiting for the first iPhone camera image…", false)
+            // A frame can arrive before startRunning() returns. Do not clear it
+            // by publishing a stale waiting status after capture has succeeded.
+            if !receivedFrame { onStatus?("Waiting for the first iPhone camera image…", false) }
             let deadline = ContinuousClock.now.advanced(by: .seconds(15))
             while !receivedFrame {
                 try Task.checkCancellation()

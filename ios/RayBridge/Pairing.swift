@@ -19,12 +19,8 @@ struct Pairing: Codable {
               fingerprint.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else {
             throw BridgeError.message("This pairing link is incomplete. Copy it again from the Mac.")
         }
-        let octets = host.split(separator: ".").compactMap { UInt8($0) }
-        guard octets.count == 4, host.split(separator: ".").count == 4,
-              octets[0] == 10 || (octets[0] == 192 && octets[1] == 168) ||
-              (octets[0] == 172 && (16...31).contains(octets[1])) ||
-              (octets[0] == 169 && octets[1] == 254) else {
-            throw BridgeError.message("Pair with a Mac on your private local network.")
+        guard PairingHostPolicy.isAllowedHost(host) else {
+            throw BridgeError.message("Pair with a Mac on your private local network or tailnet.")
         }
         self.host = host; self.port = port; self.token = token; self.fingerprint = fingerprint
     }

@@ -74,6 +74,16 @@ enum RayBridgeDiagnostics {
         fflush(stdout)
         #endif
     }
+    // Stage timings carry a fixed label and a duration only, never a question,
+    // an answer, or anything about the camera image.
+    static func timing(_ message: StaticString, milliseconds: Int) {
+        let text = String(describing: message)
+        logger.notice("\(text, privacy: .public): \(milliseconds, privacy: .public) ms")
+        #if DEBUG
+        print("[RayBridge] \(text): \(milliseconds) ms")
+        fflush(stdout)
+        #endif
+    }
 }
 
 @MainActor
@@ -86,7 +96,10 @@ final class AppModel: ObservableObject {
     @Published var preferredCaptureSource = CaptureSource(
         rawValue: UserDefaults.standard.string(forKey: captureSourcePreferenceKey) ?? ""
     ) ?? .glasses {
-        didSet { UserDefaults.standard.set(preferredCaptureSource.rawValue, forKey: captureSourcePreferenceKey) }
+        didSet {
+            UserDefaults.standard.set(preferredCaptureSource.rawValue, forKey: captureSourcePreferenceKey)
+            refreshStandbyListening()
+        }
     }
     @Published private(set) var glassesWarning: GlassesWarning?
     @Published private(set) var sessionPhase = SessionController.Phase.idle
@@ -150,6 +163,10 @@ final class AppModel: ObservableObject {
     private var cancellationPending = false
     private var cancellationToken: UUID?
     private var cancellationTimeout: Task<Void, Never>?
+    private var turnClock: ContinuousClock.Instant?
+    // What this phone has actually spoken of an answer that is still arriving.
+    private var spokenAnswerPrefix = ""
+    private var answerStreamStopped = false
     @Published var pairedHost: String? = Pairing.load()?.host
     private let connection = BridgeConnection()
     private let camera = GlassesCamera()
@@ -205,6 +222,7 @@ final class AppModel: ObservableObject {
         stopImmediately: { [unowned self] in
             activity += 1; busy = false; cameraRequested = false
             muted = false
+            endAnswerStream()
             commandConfirmationPending = false; pendingAnswerMessage = nil
             cancellationPending = false; cancellationToken = nil; cancellationTimeout?.cancel()
             pendingCameraAnnouncement = false; cameraActive = false; frame = nil
@@ -384,7 +402,7 @@ final class AppModel: ObservableObject {
             try Task.checkCancellation()
             if let connectionFailure { throw BridgeError.message(connectionFailure) }
             guard ContinuousClock.now < deadline else {
-                throw BridgeError.message("The Mac did not answer. Check that RayBridge is open on your Mac and both devices are on the same Wi-Fi.")
+                throw BridgeError.message("The Mac did not answer. Check that RayBridge is open on your Mac and both devices are on the same Wi-Fi network or tailnet.")
             }
             try await Task.sleep(for: .milliseconds(100))
         }
@@ -457,6 +475,7 @@ final class AppModel: ObservableObject {
     func background() {
         appIsActive = false
         pendingErrorAnnouncement = nil
+        endAnswerStream()
         commandConfirmationPending = false; pendingAnswerMessage = nil
         // The permission handoff is part of startup, not a request to stop it.
         if camera.awaitingPermission { return }
@@ -530,6 +549,7 @@ final class AppModel: ObservableObject {
         else { RayBridgeDiagnostics.event("Start RayBridge requested without glasses") }
         speech.stop()
         pendingErrorAnnouncement = nil
+        endAnswerStream()
         commandConfirmationPending = false; pendingAnswerMessage = nil
         speech.allowPhoneAudio = usePhoneAudio
         activity += 1; error = nil; muted = false; pendingCameraAnnouncement = false
@@ -664,6 +684,7 @@ final class AppModel: ObservableObject {
     func ask(_ text: String) {
         guard running, connected, !muted, !busy, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         RayBridgeDiagnostics.event("Question submitted to Mac")
+        turnClock = ContinuousClock.now; spokenAnswerPrefix = ""; answerStreamStopped = false
         speech.stop(); busy = true; transcript = text; error = nil; status = "Asking ChatGPT…"
         speech.allowPhoneAudio = usePhoneAudio
         do { try speech.startCommandListening(for: currentResponseCommands) }
@@ -693,11 +714,25 @@ final class AppModel: ObservableObject {
                 try await connection.send(["type": "ask", "text": text,
                                            "ttsEngine": answerVoiceEngine.rawValue,
                                            "ttsVoice": kokoroVoiceIdentifier])
+                guard current == activity else { return }
+                markTurn("Question sent to the Mac")
             } catch {
                 guard current == activity, running else { return }
                 stop(); fail(error.localizedDescription)
             }
         }
+    }
+    private func markTurn(_ label: StaticString) {
+        guard let turnClock else { return }
+        let elapsed = turnClock.duration(to: .now)
+        let milliseconds = Int(Double(elapsed.components.seconds) * 1000
+            + Double(elapsed.components.attoseconds) / 1e15)
+        RayBridgeDiagnostics.timing(label, milliseconds: milliseconds)
+    }
+    private func endAnswerStream() {
+        turnClock = nil
+        spokenAnswerPrefix = ""
+        answerStreamStopped = false
     }
     private func cancelCurrentTurn(verballyConfirm: Bool) {
         guard running, connected else { return }
@@ -705,6 +740,7 @@ final class AppModel: ObservableObject {
         activity += 1
         let needsMacCancellation = busy || cancellationPending
         let alreadyCancelling = cancellationPending
+        endAnswerStream()
         busy = false; cancellationPending = needsMacCancellation; pendingCameraAnnouncement = false
         transcript = ""; error = nil
         if verballyConfirm {
@@ -756,8 +792,31 @@ final class AppModel: ObservableObject {
             connected = true
         case "thinking":
             guard running, busy, !cancellationPending else { return }
+            markTurn("Mac accepted the question")
             if muted { status = "Muted while Codex is thinking. Say Unmute." }
             else { status = message["hasImage"] as? Bool == true ? "Thinking with a current camera image…" : "Thinking. No current camera image." }
+        // A finished sentence of an answer the Mac is still writing.
+        case "answer.partial":
+            guard running, busy, !cancellationPending, !answerStreamStopped,
+                  let text = message["text"] as? String, !text.isEmpty else { return }
+            // A spoken command confirmation owns the audio route, so the rest of
+            // this answer waits and is spoken once it is complete.
+            guard !commandConfirmationPending else { answerStreamStopped = true; return }
+            if spokenAnswerPrefix.isEmpty { markTurn("First answer sentence received") }
+            do {
+                speech.allowPhoneAudio = usePhoneAudio
+                try speech.speakStreamedChunk(text, listenForCommands: currentResponseCommands)
+                spokenAnswerPrefix += text
+                answer = spokenAnswerPrefix
+                status = muted ? "Muted while the answer is speaking. Say Unmute." : "Speaking"
+            } catch { stop(); fail(error.localizedDescription) }
+        // The assistant replaced the text it was writing, so what was spoken was
+        // not the answer after all.
+        case "answer.discard":
+            guard running, busy, !cancellationPending, !spokenAnswerPrefix.isEmpty else { return }
+            speech.cancelStreamedAnswer()
+            spokenAnswerPrefix = ""; answer = ""
+            status = muted ? "Muted while Codex is thinking. Say Unmute." : "Still thinking…"
         case "answer":
             guard running, busy, !cancellationPending, let text = message["text"] as? String else { return }
             if commandConfirmationPending {
@@ -765,6 +824,7 @@ final class AppModel: ObservableObject {
                 return
             }
             RayBridgeDiagnostics.event("Answer received from Mac")
+            markTurn("Complete answer received")
             busy = false; answer = text; status = "Answer ready"
             do {
                 speech.allowPhoneAudio = usePhoneAudio
@@ -775,10 +835,21 @@ final class AppModel: ObservableObject {
                     try speech.speakAudio(data, listenForCommands: currentResponseCommands)
                     status = muted ? "Muted while the answer is speaking. Say Unmute." : "Speaking with Kokoro"
                 } else {
-                    try speech.speak(text, listenForCommands: currentResponseCommands)
-                    status = muted ? "Muted while the answer is speaking. Say Unmute."
-                        : message["ttsFallback"] == nil ? "Speaking" : "Speaking with Apple voice. Kokoro is unavailable on the Mac."
+                    switch AnswerStreamPolicy.speech(completed: text, alreadySpoken: spokenAnswerPrefix) {
+                    case .whole(let whole):
+                        try speech.speak(whole, listenForCommands: currentResponseCommands)
+                        status = muted ? "Muted while the answer is speaking. Say Unmute."
+                            : message["ttsFallback"] == nil ? "Speaking" : "Speaking with Apple voice. Kokoro is unavailable on the Mac."
+                    case .remainder(let remainder):
+                        try speech.speakStreamedChunk(remainder, listenForCommands: currentResponseCommands)
+                        speech.finishStreamedAnswer()
+                        status = muted ? "Muted while the answer is speaking. Say Unmute." : "Speaking"
+                    case .nothing:
+                        speech.finishStreamedAnswer()
+                        status = muted ? "Muted while the answer is speaking. Say Unmute." : "Speaking"
+                    }
                 }
+                endAnswerStream()
             } catch { stop(); fail(error.localizedDescription) }
         case "cancelled":
             guard running, cancellationPending else { return }

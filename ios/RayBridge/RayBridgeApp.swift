@@ -141,7 +141,7 @@ struct SetupView: View {
                         .disabled(model.sessionActive)
                         .accessibilityHint("When off, RayBridge sends an image only when your question appears to ask about your surroundings. Say use the camera to always include one.")
                     Text(model.alwaysSendCameraImage
-                         ? "Every question includes a current image from the glasses camera."
+                         ? "Every question includes a current image from the selected camera."
                          : "RayBridge sends an image only for questions that appear visual. Say “use the camera” to always include one.")
                 }
                 Section("Sound cues") {

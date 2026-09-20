@@ -49,13 +49,23 @@
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>ts.net</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Connect to your Meta glasses camera and audio.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Take a picture with this iPhone for your question when your glasses are not connected.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Connect securely to RayBridge on your Mac over your Wi-Fi network.</string>
+	<string>Connect securely to RayBridge on your Mac over your Wi-Fi network or tailnet.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Hear your questions through your connected glasses, or through this iPhone when they are not connected.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
