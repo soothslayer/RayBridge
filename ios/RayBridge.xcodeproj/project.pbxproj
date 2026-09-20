@@ -12,6 +12,7 @@
 		2B66AB01A1C45881B21F5101 /* CameraImagePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B66AB01A1C45881B21F5102 /* CameraImagePolicy.swift */; };
 		2B66AB01A1C45881B21F5111 /* AnswerStreamPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B66AB01A1C45881B21F5112 /* AnswerStreamPolicy.swift */; };
 		3C77BC02B2D56992C3206201 /* VoiceCommandPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C77BC02B2D56992C3206202 /* VoiceCommandPolicy.swift */; };
+		4D88CD03C3E67AA3D4317301 /* PairingHostPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D88CD03C3E67AA3D4317302 /* PairingHostPolicy.swift */; };
 		23F6D9EFBB273E66A6FB6672 /* RayBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C5EE867F5E3F8654E9009D1 /* RayBridgeApp.swift */; };
 		467447855039BD64DBF629C3 /* BridgeConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40A63ED8D2E23052DFA68090 /* BridgeConnection.swift */; };
 		580D4F80DDE71E3F81D1175F /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 955DB17DA6A3D4AD29CAC310 /* AppModel.swift */; };
@@ -29,6 +30,7 @@
 		2B66AB01A1C45881B21F5102 /* CameraImagePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraImagePolicy.swift; sourceTree = "<group>"; };
 		2B66AB01A1C45881B21F5112 /* AnswerStreamPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnswerStreamPolicy.swift; sourceTree = "<group>"; };
 		3C77BC02B2D56992C3206202 /* VoiceCommandPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCommandPolicy.swift; sourceTree = "<group>"; };
+		4D88CD03C3E67AA3D4317302 /* PairingHostPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingHostPolicy.swift; sourceTree = "<group>"; };
 		40A63ED8D2E23052DFA68090 /* BridgeConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeConnection.swift; sourceTree = "<group>"; };
 		416AB305A59A692B92AFD3D8 /* SpeechController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechController.swift; sourceTree = "<group>"; };
 		607F3F3DD11823BC3C65DB43 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
@@ -82,6 +84,7 @@
 				2B66AB01A1C45881B21F5102 /* CameraImagePolicy.swift */,
 				2B66AB01A1C45881B21F5112 /* AnswerStreamPolicy.swift */,
 				3C77BC02B2D56992C3206202 /* VoiceCommandPolicy.swift */,
+				4D88CD03C3E67AA3D4317302 /* PairingHostPolicy.swift */,
 			);
 			path = RayBridge;
 			sourceTree = "<group>";
@@ -172,6 +175,7 @@
 				2B66AB01A1C45881B21F5101 /* CameraImagePolicy.swift in Sources */,
 				2B66AB01A1C45881B21F5111 /* AnswerStreamPolicy.swift in Sources */,
 				3C77BC02B2D56992C3206201 /* VoiceCommandPolicy.swift in Sources */,
+				4D88CD03C3E67AA3D4317301 /* PairingHostPolicy.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
