@@ -2,7 +2,7 @@
 
 ```mermaid
 flowchart LR
-    G[Meta glasses camera] -->|Meta DAT 0.6.0 stream| I[iPhone app]
+    G[Meta glasses camera] -->|Meta DAT 0.6.0 HEVC stream| I[iPhone app]
     P[iPhone camera, used without glasses] -->|AVCaptureSession| I
     M[Glasses microphone] -->|iOS Bluetooth audio| I
     N[iPhone microphone, used without glasses] --> I
@@ -53,6 +53,8 @@ Each turn logs its stage timings on the Mac, and the iPhone logs its own stages 
 The glasses are the default source and are not required. Before startup, a synchronous check of the Meta SDK classifies the glasses as ready, discovery-unavailable, unregistered, not found, not connected, still connecting, or needing an update. Anything but ready warns and offers the iPhone camera and speaker, the glasses anyway, or cancellation; that device state can lag the hardware, which is why an unready answer never blocks the glasses. A failure of the glasses camera or glasses audio during startup makes the same offer, while a Mac connection or iPhone permission failure does not, because dropping the glasses would not fix it. A saved preference of `This iPhone` skips the check, the warning, and Meta registration.
 
 Both sources report through one interface, so the session lifecycle, frame limits, staleness rule, and protocol are identical: one JPEG per second, at most 500 KB, and a usable image is required before the microphone starts. The iPhone source captures 1280x720 on a private queue, rotates frames upright, re-encodes down to the size limit, and leaves the app's audio session alone. Without glasses the iPhone carries the microphone, cues, confirmations, and answers, so losing a Bluetooth route no longer ends the session. The Mac is still required; only the glasses are optional.
+
+The glasses source requests Meta DAT's compressed `hvc1` stream because its raw stream pauses when iOS backgrounds the app. Every HEVC frame is decoded through a software VideoToolbox session because iOS tears down hardware video decoders in the background; JPEG encoding remains limited to one frame per second. With the audio, Bluetooth, and external-accessory background modes enabled, an active glasses session keeps its camera, on-device recognition, voice commands, Mac connection, and answer audio while the phone is locked or another app is open. Backgrounding does not reset the current turn or partially spoken answer. Stopped-app voice standby ends in the background, so the user must start RayBridge before locking the phone. iOS does not allow ordinary iPhone-camera capture to continue in the background; that source stops cleanly and explains that glasses are required for background use.
 
 ## Intentional limits
 

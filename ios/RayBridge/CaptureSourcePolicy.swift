@@ -68,6 +68,13 @@ enum StartDecision: Equatable {
     case warnBeforePhone(GlassesReadiness)
 }
 
+enum BackgroundSessionAction: Equatable {
+    case continueGlassesSession
+    case preservePermissionHandoff
+    case stopPhoneSession
+    case stopStandbyListening
+}
+
 enum CaptureSourcePolicy {
     static let phoneFallbackOffer =
         "You can continue without glasses, using the iPhone camera and speaker."
@@ -103,6 +110,16 @@ enum CaptureSourcePolicy {
     static func offersPhoneFallback(failedStage: StartupStage, source: CaptureSource) -> Bool {
         guard source == .glasses else { return false }
         return failedStage == .startingCamera || failedStage == .startingAudio
+    }
+
+    static func backgroundAction(
+        sessionActive: Bool,
+        source: CaptureSource,
+        awaitingGlassesPermission: Bool
+    ) -> BackgroundSessionAction {
+        if awaitingGlassesPermission { return .preservePermissionHandoff }
+        guard sessionActive else { return .stopStandbyListening }
+        return source == .glasses ? .continueGlassesSession : .stopPhoneSession
     }
 
     private static func reason(_ readiness: GlassesReadiness) -> String {

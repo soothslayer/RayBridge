@@ -4,17 +4,77 @@ import MWDATCore
 import MWDATCamera
 import CoreBluetooth
 import ExternalAccessory
+import CoreImage
+import VideoToolbox
 
-// The SDK may publish on a background queue. Drop surplus frames before encoding.
+// HEVC frames depend on the frames before them, so decode every frame and only
+// reduce the rate at the JPEG-encoding boundary. Software decoding survives an
+// iOS lock/background transition; hardware VideoToolbox sessions do not.
 final class FrameSampler: @unchecked Sendable {
     private let lock = NSLock()
     private var last = Date.distantPast
+    private var session: VTDecompressionSession?
+    private let imageContext = CIContext(options: [.useSoftwareRenderer: true])
+
+    deinit {
+        if let session { VTDecompressionSessionInvalidate(session) }
+    }
+
     func jpeg(_ frame: VideoFrame) -> Data? {
         lock.lock()
-        guard Date().timeIntervalSince(last) >= 1 else { lock.unlock(); return nil }
-        last = Date(); lock.unlock()
-        guard let image = frame.makeUIImage(), let data = image.jpegData(compressionQuality: 0.55), data.count <= 500_000 else { return nil }
+        defer { lock.unlock() }
+        guard let pixelBuffer = decode(frame.sampleBuffer) else { return nil }
+        let now = Date()
+        guard now.timeIntervalSince(last) >= 1 else { return nil }
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
+        guard let cgImage = imageContext.createCGImage(image, from: image.extent),
+              let data = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.55),
+              data.count <= 500_000 else { return nil }
+        last = now
         return data
+    }
+
+    private func decode(_ sampleBuffer: CMSampleBuffer) -> CVPixelBuffer? {
+        guard let format = CMSampleBufferGetFormatDescription(sampleBuffer) else { return nil }
+        if let session, !VTDecompressionSessionCanAcceptFormatDescription(session, formatDescription: format) {
+            VTDecompressionSessionInvalidate(session)
+            self.session = nil
+        }
+        if session == nil {
+            let decoder: CFDictionary = [
+                kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: false
+            ] as CFDictionary
+            let output: CFDictionary = [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+            ] as CFDictionary
+            var created: VTDecompressionSession?
+            guard VTDecompressionSessionCreate(
+                allocator: kCFAllocatorDefault,
+                formatDescription: format,
+                decoderSpecification: decoder,
+                imageBufferAttributes: output,
+                outputCallback: nil,
+                decompressionSessionOut: &created
+            ) == noErr, let created else { return nil }
+            session = created
+        }
+        guard let session else { return nil }
+        var imageBuffer: CVImageBuffer?
+        var infoFlags = VTDecodeInfoFlags()
+        let status = VTDecompressionSessionDecodeFrame(
+            session,
+            sampleBuffer: sampleBuffer,
+            flags: [],
+            infoFlagsOut: &infoFlags
+        ) { decodeStatus, _, decodedBuffer, _, _ in
+            if decodeStatus == noErr { imageBuffer = decodedBuffer }
+        }
+        if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr {
+            VTDecompressionSessionInvalidate(session)
+            self.session = nil
+        }
+        return status == noErr ? imageBuffer : nil
     }
 }
 
@@ -200,7 +260,9 @@ final class GlassesCamera: CameraSource {
             }
             try Task.checkCancellation()
             RayBridgeDiagnostics.event("Glasses device session started; opening camera stream")
-            guard let stream = try device.addStream(config: StreamSessionConfig(videoCodec: .raw, resolution: .medium, frameRate: 7)) else {
+            // Meta's raw stream pauses when iOS backgrounds the app. HEVC keeps
+            // producing frames while the phone is locked or another app is open.
+            guard let stream = try device.addStream(config: StreamSessionConfig(videoCodec: .hvc1, resolution: .medium, frameRate: 7)) else {
                 throw BridgeError.message("Could not open the glasses camera.")
             }
             self.stream = stream

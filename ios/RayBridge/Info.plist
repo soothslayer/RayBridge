@@ -72,8 +72,10 @@
 	<string>Transcribe your questions on this iPhone before sending them to your Mac.</string>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>audio</string>
 		<string>external-accessory</string>
 		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
