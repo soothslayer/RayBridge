@@ -26,3 +26,15 @@ For distribution, configure the Meta release channel, replace development identi
 6. Wait silently for more than 45 seconds in standby, during thinking, and while muted; commands should continue working after recognition recycles. Repeat commands quickly and during state transitions.
 7. Disable each voice-command setting, restart the app, and verify it remains disabled. Use the screen controls, background the app, and disconnect Bluetooth during recognition; confirm microphone activity ends appropriately. Check with VoiceOver enabled and disabled.
 8. Say “start” while the glasses are registered but disconnected, and trigger a Mac connection failure. Confirm each full error is spoken after cleanup. Disconnected-glasses errors should use the iPhone speaker; other errors should use the glasses when their audio route remains available. With VoiceOver enabled, confirm only one voice announces the error.
+
+## Running without glasses
+
+1. Turn the glasses off or disconnect them in Meta AI, then tap **Start RayBridge**. Confirm the warning names the glasses state, appears as an alert, is posted to VoiceOver, and is spoken aloud when VoiceOver is off. Confirm nothing has started yet: no camera, no microphone, no Mac connection.
+2. Choose **Continue without glasses**. Confirm the iPhone camera permission prompt on first use, the spoken **iPhone camera connected** confirmation, and a useful answer about a printed label the iPhone's back camera can see. Confirm the frame is upright rather than sideways.
+3. From that warning, choose **Try glasses anyway** with the glasses reconnected and confirm the session runs on the glasses. Choose **Cancel** and confirm RayBridge returns to standby with nothing started.
+4. In hands-free standby with no glasses, say “start.” Confirm the warning is heard, then say “start” again to continue without glasses and “cancel” on a later attempt to dismiss it.
+5. Set **Setup → Camera and audio → Use** to **This iPhone** on a phone with no registered glasses. Confirm Start never warns, never requires Meta registration, and that the choice survives a relaunch. Set it back to **Meta glasses** and confirm the warning returns.
+6. Start with the glasses connected but with the glasses camera failing (for example, arms closed or camera permission denied in Meta AI). Confirm the spoken failure ends with the offer to continue without glasses and that accepting it starts the iPhone camera.
+7. Without glasses, disconnect and reconnect Bluetooth headphones mid-session. Confirm the session continues rather than stopping with a glasses-audio error, and that answers play on the speaker when nothing else is connected.
+8. Without glasses, take a call or open the Camera app mid-session. Confirm the camera-paused status, that no stale image is used for the next question, and that Stop and Start recover.
+9. Compare battery, warmth, and latency over a sustained iPhone-camera session against a glasses session.

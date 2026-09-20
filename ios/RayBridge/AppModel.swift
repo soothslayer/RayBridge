@@ -13,6 +13,7 @@ private let legacyStopCommandPreferenceKey = "stopCommandEnabled"
 private let handsFreeStandbyPreferenceKey = "handsFreeStandbyEnabled"
 private let thinkingHeartbeatPreferenceKey = "thinkingHeartbeatEnabled"
 private let assistantProviderPreferenceKey = "assistantProvider"
+private let captureSourcePreferenceKey = "preferredCaptureSource"
 
 private func initialVoiceCommandsEnabled() -> Bool {
     let defaults = UserDefaults.standard
@@ -90,6 +91,17 @@ final class AppModel: ObservableObject {
     @Published var status = "Tap Start RayBridge to begin"
     @Published var cameraStatus = "Camera off"
     @Published var connected = false
+    // The source this session is running on, and the one Start prefers.
+    @Published private(set) var captureSource = CaptureSource.glasses
+    @Published var preferredCaptureSource = CaptureSource(
+        rawValue: UserDefaults.standard.string(forKey: captureSourcePreferenceKey) ?? ""
+    ) ?? .glasses {
+        didSet {
+            UserDefaults.standard.set(preferredCaptureSource.rawValue, forKey: captureSourcePreferenceKey)
+            refreshStandbyListening()
+        }
+    }
+    @Published private(set) var glassesWarning: GlassesWarning?
     @Published private(set) var sessionPhase = SessionController.Phase.idle
     @Published var showingSetup = false
     var running: Bool { sessionPhase == .running }
@@ -158,6 +170,7 @@ final class AppModel: ObservableObject {
     @Published var pairedHost: String? = Pairing.load()?.host
     private let connection = BridgeConnection()
     private let camera = GlassesCamera()
+    private let phoneCamera = PhoneCamera()
     private let speech = SpeechController()
     private var frame: (data: Data, date: Date)?
     private var connectionFailure: String?
@@ -168,6 +181,20 @@ final class AppModel: ObservableObject {
     private var commandConfirmationPending = false
     private var pendingAnswerMessage: [String: Any]?
     private var appIsActive = false
+    private var startupStage = StartupStage.other
+
+    // Without glasses there is no Bluetooth route to wait for, so the iPhone
+    // speaker and microphone carry the whole session. While stopped, the saved
+    // preference and any open no-glasses warning decide, so standby listening
+    // and spoken warnings still work for someone who has no glasses at all.
+    private var usePhoneAudio: Bool {
+        if phoneAudio || captureSource.requiresPhoneAudio { return true }
+        return !sessionActive && (preferredCaptureSource.requiresPhoneAudio || glassesWarning != nil)
+    }
+    private var activeCamera: any CameraSource { captureSource == .phone ? phoneCamera : camera }
+    private var standbyCommands: Set<VoiceCommand> {
+        glassesWarning == nil ? [.start] : [.start, .cancel]
+    }
 
     private var activeResponseCommands: Set<VoiceCommand> {
         voiceCommandsEnabled ? [.stop, .cancel, .mute] : []
@@ -181,13 +208,13 @@ final class AppModel: ObservableObject {
         authorize: { [unowned self] in try await speech.permissions() },
         startCamera: { [unowned self] in
             cameraRequested = true; cameraAnnounced = false
-            try await camera.start()
+            try await activeCamera.start()
         },
         startAudio: { [unowned self] in
             guard let frame, Date().timeIntervalSince(frame.date) < 2.5 else {
                 throw BridgeError.message("No current camera image. Tap Start RayBridge to try again.")
             }
-            speech.allowPhoneAudio = phoneAudio
+            speech.allowPhoneAudio = usePhoneAudio
             speech.voiceCommandsEnabled = voiceCommandsEnabled
             speech.questionCommands = [.stop, .cancel, .mute]
             try speech.startListening()
@@ -204,7 +231,8 @@ final class AppModel: ObservableObject {
             connection.disconnect(); connected = false
             UIApplication.shared.isIdleTimerDisabled = false
         },
-        stopCamera: { [unowned self] in await camera.stop() }
+        // Stop whichever source this session started, not just the glasses.
+        stopCamera: { [unowned self] in await camera.stop(); await phoneCamera.stop() }
     )
 
     init() {
@@ -218,37 +246,25 @@ final class AppModel: ObservableObject {
             guard self.sessionActive, self.sessionPhase != .stopping else { return }
             self.stop(); self.fail(message)
         }
-        camera.onFrame = { [weak self] data in
-            guard let self, self.cameraRequested else { return }
-            self.frame = (data, Date()); self.cameraActive = true; self.cameraStatus = "Glasses camera connected"
-            if !self.cameraAnnounced {
-                self.cameraAnnounced = true
-                self.pendingCameraAnnouncement = true
-                self.announceCameraIfReady()
-            }
-        }
+        bind(.glasses, camera)
+        bind(.phone, phoneCamera)
         camera.onRegistration = { [weak self] in self?.registrationStatus = $0 }
-        camera.onStatus = { [weak self] text, active in
-            guard let self else { return }
-            self.cameraStatus = text; self.cameraActive = active
-            if self.sessionPhase == .startingCamera { self.status = text }
-            if !active {
-                self.frame = nil
-                let current = self.activity
-                if self.connected {
-                    Task {
-                        guard current == self.activity, self.connected else { return }
-                        try? await self.connection.send(["type": "camera.off"])
-                    }
-                }
-            }
-        }
         // Give Bluetooth discovery time to initialize before registration or a
         // camera request, and restore the registration label after relaunch.
         do { try camera.configure() }
         catch { cameraStatus = "Glasses discovery could not initialize. Reopen RayBridge." }
         session.onPhase = { [weak self] phase in self?.sessionChanged(phase) }
-        session.onError = { [weak self] error in self?.fail(error.localizedDescription) }
+        session.onError = { [weak self] error in
+            guard let self else { return }
+            let message = error.localizedDescription
+            let stage = self.startupStage
+            guard CaptureSourcePolicy.offersPhoneFallback(failedStage: stage, source: self.captureSource) else {
+                self.fail(message); return
+            }
+            // fail() speaks this text, so the warning itself stays silent.
+            self.fail("\(message) \(CaptureSourcePolicy.phoneFallbackOffer)")
+            self.present(CaptureSourcePolicy.startupFailureWarning(message), announce: false)
+        }
         speech.voiceCommandsEnabled = voiceCommandsEnabled
         speech.onVoiceCommand = { [weak self] command in self?.handleVoiceCommand(command) }
         speech.onQuestion = { [weak self] text in self?.ask(text) }
@@ -263,12 +279,12 @@ final class AppModel: ObservableObject {
                 self.stop(); self.fail(message)
             } else {
                 self.speech.stop()
-                if self.error == nil { self.status = "Stopped. Tap Start RayBridge to begin." }
+                if self.error == nil { self.status = self.idleStatus }
             }
         }
         speech.onFinishedSpeaking = { [weak self] in
             guard let self else { return }
-            self.speech.allowPhoneAudio = self.phoneAudio
+            self.speech.allowPhoneAudio = self.usePhoneAudio
             if self.commandConfirmationPending { return }
             if let message = self.pendingErrorAnnouncement { self.speakError(message) }
             else if self.pendingCameraAnnouncement { self.announceCameraIfReady() }
@@ -282,7 +298,7 @@ final class AppModel: ObservableObject {
                 if !self.sessionActive,
                    reason == AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue {
                     self.refreshStandbyListening()
-                } else if self.running, !self.phoneAudio,
+                } else if self.running, !self.usePhoneAudio,
                           reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue {
                     self.stop(); self.fail("Glasses audio disconnected. Reconnect the glasses, then start again.")
                 }
@@ -298,6 +314,35 @@ final class AppModel: ObservableObject {
         }
         RayBridgeDiagnostics.event("App model initialization finished")
     }
+    // Both camera sources report through the same handlers. A late callback from
+    // the source this session is not using must not disturb its status or frame.
+    private func bind(_ source: CaptureSource, _ sourceCamera: any CameraSource) {
+        sourceCamera.onFrame = { [weak self] data in
+            guard let self, self.cameraRequested, self.captureSource == source else { return }
+            self.frame = (data, Date()); self.cameraActive = true
+            self.cameraStatus = source.connectedStatus
+            if !self.cameraAnnounced {
+                self.cameraAnnounced = true
+                self.pendingCameraAnnouncement = true
+                self.announceCameraIfReady()
+            }
+        }
+        sourceCamera.onStatus = { [weak self] text, active in
+            guard let self, self.captureSource == source else { return }
+            self.cameraStatus = text; self.cameraActive = active
+            if self.sessionPhase == .startingCamera { self.status = text }
+            if !active {
+                self.frame = nil
+                let current = self.activity
+                if self.connected {
+                    Task {
+                        guard current == self.activity, self.connected else { return }
+                        try? await self.connection.send(["type": "camera.off"])
+                    }
+                }
+            }
+        }
+    }
     func refreshSpeechVoices() {
         speechVoices = speech.availableVoiceOptions()
         let saved = UserDefaults.standard.string(forKey: speechVoicePreferenceKey)
@@ -310,7 +355,7 @@ final class AppModel: ObservableObject {
         speech.allowPhoneAudio = true
         do { try speech.speak("Hello. I’m the RayBridge voice. I’ll read Codex answers to you.") }
         catch { fail("The voice preview could not play. \(error.localizedDescription)") }
-        speech.allowPhoneAudio = phoneAudio
+        speech.allowPhoneAudio = usePhoneAudio
     }
     func fail(_ message: String) {
         RayBridgeDiagnostics.event("An error was presented in the app")
@@ -334,7 +379,7 @@ final class AppModel: ObservableObject {
         catch {
             // The visual error and VoiceOver announcement remain available if
             // neither the glasses nor iPhone speaker can play the message.
-            speech.allowPhoneAudio = phoneAudio
+            speech.allowPhoneAudio = usePhoneAudio
         }
     }
     func pair() {
@@ -357,7 +402,7 @@ final class AppModel: ObservableObject {
             try Task.checkCancellation()
             if let connectionFailure { throw BridgeError.message(connectionFailure) }
             guard ContinuousClock.now < deadline else {
-                throw BridgeError.message("The Mac did not answer. Check that RayBridge is open on your Mac and both devices are on the same Wi-Fi.")
+                throw BridgeError.message("The Mac did not answer. Check that RayBridge is open on your Mac and both devices are on the same Wi-Fi network or tailnet.")
             }
             try await Task.sleep(for: .milliseconds(100))
         }
@@ -388,30 +433,43 @@ final class AppModel: ObservableObject {
         do {
             // During the announcement, recognition accepts only voice controls so the
             // ready cue cannot become the user's first question.
-            speech.allowPhoneAudio = phoneAudio
-            try speech.speak("Glasses camera connected. Listening.", listenForCommands: currentResponseCommands)
+            speech.allowPhoneAudio = usePhoneAudio
+            try speech.speak(captureSource.cameraReadyAnnouncement, listenForCommands: currentResponseCommands)
         } catch {
             RayBridgeDiagnostics.event("Camera connected, but audio confirmation could not play")
-            self.error = "Camera connected, but audio confirmation could not play. Check glasses Bluetooth audio."
+            self.error = captureSource == .glasses
+                ? "Camera connected, but audio confirmation could not play. Check glasses Bluetooth audio."
+                : "Camera connected, but audio confirmation could not play. Check the iPhone volume and silent switch."
             resumeListening()
         }
     }
     private func sessionChanged(_ phase: SessionController.Phase) {
         sessionPhase = phase
+        startupStage = Self.stage(of: phase) ?? startupStage
         switch phase {
         case .idle:
-            if error == nil { status = "Stopped. Tap Start RayBridge to begin." }
+            if error == nil { status = idleStatus }
             if let message = pendingErrorAnnouncement { speakError(message) }
             else { refreshStandbyListening() }
         case .connecting: status = "Connecting to your Mac…"
         case .authorizing: status = "Checking microphone and speech permissions…"
-        case .startingCamera: status = "Connecting glasses camera…"
+        case .startingCamera: status = captureSource.startingStatus
         case .startingAudio: status = "Preparing microphone…"
         case .running:
             status = "Listening"
             RayBridgeDiagnostics.event("RayBridge session ready with camera and microphone")
             announceCameraIfReady()
         case .stopping: status = "Stopping RayBridge…"
+        }
+    }
+    // The stage a failure happened in decides whether dropping the glasses helps.
+    private static func stage(of phase: SessionController.Phase) -> StartupStage? {
+        switch phase {
+        case .connecting: .connecting
+        case .authorizing: .authorizing
+        case .startingCamera: .startingCamera
+        case .startingAudio: .startingAudio
+        case .idle, .running, .stopping: nil
         }
     }
     func background() {
@@ -434,15 +492,66 @@ final class AppModel: ObservableObject {
         guard Pairing.load() != nil else {
             showingSetup = true; fail("Open Setup and pair your Mac first."); return
         }
-        guard camera.isRegistered else {
+        dismissGlassesWarning(resumeStandby: false)
+        switch CaptureSourcePolicy.decision(preferred: preferredCaptureSource, glasses: camera.readiness) {
+        case .startWithGlasses: begin(using: .glasses)
+        case .startWithPhone: begin(using: .phone)
+        case .warnBeforePhone(let readiness):
+            // Nothing is started yet: the user chooses the iPhone, the glasses, or neither.
+            RayBridgeDiagnostics.event("Start requested without ready glasses")
+            present(CaptureSourcePolicy.warning(for: readiness), announce: true)
+        }
+    }
+    // Continues the session on the iPhone camera and speaker alone.
+    func continueWithoutGlasses() {
+        dismissGlassesWarning(resumeStandby: false)
+        begin(using: .phone)
+    }
+    func tryGlassesAnyway() {
+        dismissGlassesWarning(resumeStandby: false)
+        begin(using: .glasses)
+    }
+    func dismissGlassesWarning(resumeStandby: Bool = true) {
+        guard glassesWarning != nil else { return }
+        glassesWarning = nil
+        if resumeStandby {
+            if error == nil { status = idleStatus }
+            refreshStandbyListening()
+        }
+    }
+    private func present(_ warning: GlassesWarning, announce: Bool) {
+        glassesWarning = warning
+        status = warning.message
+        // A startup failure has already been announced and spoken by fail().
+        guard announce else { return }
+        UIAccessibility.post(notification: .announcement, argument: warning.message)
+        guard appIsActive, !UIAccessibility.isVoiceOverRunning else {
+            // VoiceOver reads the alert; a second voice would talk over it.
+            refreshStandbyListening()
+            return
+        }
+        speech.allowPhoneAudio = true
+        do { try speech.speak(warning.spokenNotice) }
+        catch {
+            speech.allowPhoneAudio = usePhoneAudio
+            refreshStandbyListening()
+        }
+    }
+    private func begin(using source: CaptureSource) {
+        guard !sessionActive else { return }
+        if source == .glasses, !camera.isRegistered {
             showingSetup = true; fail("Open Setup and register your glasses with Meta AI first."); return
         }
-        RayBridgeDiagnostics.event("Start RayBridge requested")
+        captureSource = source
+        cameraStatus = "Camera off"
+        startupStage = .other
+        if source == .glasses { RayBridgeDiagnostics.event("Start RayBridge requested with glasses") }
+        else { RayBridgeDiagnostics.event("Start RayBridge requested without glasses") }
         speech.stop()
         pendingErrorAnnouncement = nil
         endAnswerStream()
         commandConfirmationPending = false; pendingAnswerMessage = nil
-        speech.allowPhoneAudio = phoneAudio
+        speech.allowPhoneAudio = usePhoneAudio
         activity += 1; error = nil; muted = false; pendingCameraAnnouncement = false
         UIApplication.shared.isIdleTimerDisabled = true
         session.start()
@@ -456,24 +565,38 @@ final class AppModel: ObservableObject {
         guard appIsActive, voiceCommandsEnabled, handsFreeStandbyEnabled,
               speech.hasRecognitionPermissions else {
             speech.stop()
-            if error == nil { status = "Stopped. Tap Start RayBridge to begin." }
+            if error == nil { status = idleStatus }
             return
         }
-        speech.allowPhoneAudio = phoneAudio
+        speech.allowPhoneAudio = usePhoneAudio
         do {
-            try speech.startCommandListening(for: [.start])
-            if error == nil { status = "Stopped. Say Start or tap Start RayBridge." }
+            try speech.startCommandListening(for: standbyCommands)
+            if error == nil { status = standbyStatus }
         } catch {
             // Standby is optional. The button remains available when glasses
             // audio is disconnected or recognition cannot start.
             speech.stop()
-            if self.error == nil { status = "Stopped. Tap Start RayBridge to begin." }
+            if self.error == nil { status = idleStatus }
         }
+    }
+    private var idleStatus: String {
+        glassesWarning?.message ?? "Stopped. Tap Start RayBridge to begin."
+    }
+    private var standbyStatus: String {
+        guard glassesWarning == nil else { return "Glasses aren’t connected. Say Start to continue without glasses, or say Cancel." }
+        return "Stopped. Say Start or tap Start RayBridge."
     }
     private func handleVoiceCommand(_ command: VoiceCommand) {
         switch command {
         case .start:
             guard !sessionActive else { return }
+            if glassesWarning != nil {
+                status = "Starting without glasses…"
+                confirmVoiceCommand("Starting without glasses.", preservingCurrentOutput: false) { [weak self] in
+                    self?.continueWithoutGlasses()
+                }
+                return
+            }
             status = "Starting RayBridge…"
             confirmVoiceCommand("Starting.", preservingCurrentOutput: false) { [weak self] in
                 self?.start()
@@ -485,6 +608,12 @@ final class AppModel: ObservableObject {
                 self?.stop()
             }
         case .cancel:
+            if !sessionActive, glassesWarning != nil {
+                confirmVoiceCommand("Cancelled.", preservingCurrentOutput: false) { [weak self] in
+                    self?.dismissGlassesWarning()
+                }
+                return
+            }
             cancelCurrentTurn(verballyConfirm: true)
         case .mute:
             muteVoiceInput()
@@ -498,7 +627,7 @@ final class AppModel: ObservableObject {
         completion: @escaping () -> Void
     ) {
         commandConfirmationPending = true
-        speech.allowPhoneAudio = phoneAudio
+        speech.allowPhoneAudio = usePhoneAudio
         let finish = { [weak self] in
             guard let self else { return }
             self.commandConfirmationPending = false
@@ -557,12 +686,12 @@ final class AppModel: ObservableObject {
         RayBridgeDiagnostics.event("Question submitted to Mac")
         turnClock = ContinuousClock.now; spokenAnswerPrefix = ""; answerStreamStopped = false
         speech.stop(); busy = true; transcript = text; error = nil; status = "Asking ChatGPT…"
-        speech.allowPhoneAudio = phoneAudio
+        speech.allowPhoneAudio = usePhoneAudio
         do { try speech.startCommandListening(for: currentResponseCommands) }
         catch { stop(); fail(error.localizedDescription); return }
         if thinkingHeartbeatEnabled {
             do {
-                speech.allowPhoneAudio = phoneAudio
+                speech.allowPhoneAudio = usePhoneAudio
                 try speech.startThinkingHeartbeat()
             } catch {
                 RayBridgeDiagnostics.event("Thinking heartbeat could not play")
@@ -675,7 +804,7 @@ final class AppModel: ObservableObject {
             guard !commandConfirmationPending else { answerStreamStopped = true; return }
             if spokenAnswerPrefix.isEmpty { markTurn("First answer sentence received") }
             do {
-                speech.allowPhoneAudio = phoneAudio
+                speech.allowPhoneAudio = usePhoneAudio
                 try speech.speakStreamedChunk(text, listenForCommands: currentResponseCommands)
                 spokenAnswerPrefix += text
                 answer = spokenAnswerPrefix
@@ -698,7 +827,7 @@ final class AppModel: ObservableObject {
             markTurn("Complete answer received")
             busy = false; answer = text; status = "Answer ready"
             do {
-                speech.allowPhoneAudio = phoneAudio
+                speech.allowPhoneAudio = usePhoneAudio
                 if let audio = message["audio"] as? [String: Any],
                    audio["format"] as? String == "m4a",
                    let encoded = audio["data"] as? String,

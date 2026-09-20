@@ -3,7 +3,9 @@
 ```mermaid
 flowchart LR
     G[Meta glasses camera] -->|Meta DAT 0.6.0 stream| I[iPhone app]
+    P[iPhone camera, used without glasses] -->|AVCaptureSession| I
     M[Glasses microphone] -->|iOS Bluetooth audio| I
+    N[iPhone microphone, used without glasses] --> I
     I -->|On-device speech recognition| Q[Question and fresh JPEG]
     Q -->|Pinned TLS WebSocket over Wi-Fi or tailnet| B[Mac bridge]
     B --> A{Selected assistant}
@@ -15,7 +17,7 @@ flowchart LR
     E <-->|Configured local or hosted model| L[Hermes model provider]
     A -->|Final answer text| B
     B -->|Answer text| I
-    I -->|Apple speech synthesis and Bluetooth| S[Glasses speakers]
+    I -->|Apple speech synthesis and Bluetooth| S[Glasses speakers or iPhone speaker]
 ```
 
 ## Phone connection
@@ -43,6 +45,12 @@ The iPhone checks that the source frame is at most 2.5 seconds old **before** tr
 The connection handshake already reads the assistant account, so a proven sign-in is reused for five minutes instead of being read again before every question. Reading it per question cost a CLI subprocess for Claude Code and Hermes. A failed turn drops the cached result, so a sign-out during a session is still reported.
 
 Each turn logs its stage timings on the Mac, and the iPhone logs its own stages to the unified log. Both record fixed labels and durations only: no question, answer, image, or account detail. Every connection has a separate conversation in the selected assistant; there is no transcript sharing across phones or providers.
+
+## Camera and audio source
+
+The glasses are the default source and are not required. Before startup, a synchronous check of the Meta SDK classifies the glasses as ready, discovery-unavailable, unregistered, not found, not connected, still connecting, or needing an update. Anything but ready warns and offers the iPhone camera and speaker, the glasses anyway, or cancellation; that device state can lag the hardware, which is why an unready answer never blocks the glasses. A failure of the glasses camera or glasses audio during startup makes the same offer, while a Mac connection or iPhone permission failure does not, because dropping the glasses would not fix it. A saved preference of `This iPhone` skips the check, the warning, and Meta registration.
+
+Both sources report through one interface, so the session lifecycle, frame limits, staleness rule, and protocol are identical: one JPEG per second, at most 500 KB, and a usable image is required before the microphone starts. The iPhone source captures 1280x720 on a private queue, rotates frames upright, re-encodes down to the size limit, and leaves the app's audio session alone. Without glasses the iPhone carries the microphone, cues, confirmations, and answers, so losing a Bluetooth route no longer ends the session. The Mac is still required; only the glasses are optional.
 
 ## Intentional limits
 

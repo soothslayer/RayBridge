@@ -16,6 +16,15 @@ Updated September 18, 2026.
 - 54 backend tests pass. Verified live against the installed CLI: a warm process answering successive questions, an inline image described correctly in one turn, an interrupt aborting an in-flight turn with the process surviving, and sentence-by-sentence delivery reaching the phone 0.9 seconds before the completed answer.
 - Not done from the same review: opening the Claude process when the phone connects so the first question does not pay startup, the same warm-process treatment for Hermes, adaptive end-of-speech timing, sending camera frames while listening rather than at ask time, streamed Kokoro synthesis, and background audio so a session survives the phone going in a pocket.
 
+## Active: optional no-glasses mode
+
+- Branch `claude/raybridge-no-glasses-mode-770cmr` makes the glasses optional. `CaptureSource` selects the glasses or this iPhone; `CameraSource` gives both the same start/stop/frame/status interface, so the session lifecycle, frame limits, staleness rule, and phone protocol are unchanged.
+- Start now checks `GlassesCamera.readiness` synchronously (discovery, registration, device list, link state, compatibility). Anything but ready warns before starting anything and offers **Continue without glasses**, **Try glasses anyway** (or **Open Setup** when unregistered), and **Cancel**. Device state can lag the hardware, so the warning never blocks the glasses.
+- A glasses camera or glasses audio failure during startup makes the same offer, carrying the underlying failure; a Mac connection or iPhone permission failure does not, because the iPhone cannot fix it. The warning is posted to VoiceOver and spoken when VoiceOver is off; in standby, “start” continues without glasses and “cancel” dismisses.
+- `PhoneCamera` captures 1280x720 on a private queue, rotates frames upright, samples one JPEG per second at 500 KB or less, leaves the app's audio session to `SpeechController`, and requires a usable image before the microphone starts. `NSCameraUsageDescription` was added.
+- Without glasses the iPhone carries microphone, cues, confirmations, and answers, so a lost Bluetooth route no longer ends the session. `Setup → Camera and audio` persists the choice; **This iPhone** skips the glasses check, warning, and Meta registration entirely.
+- `bash scripts/test-ios-capture-source.sh` adds six hardware-independent tests over the decisions. All 39 Node tests, `npm run check`, the shell syntax check, and `git diff --check` pass. **No Swift compiler was available in this environment: the iOS build, the new Swift tests, and all physical behavior are unverified.** See the new no-glasses section in `docs/hardware-checks.md`.
+
 ## Active: Claude Code provider
 
 - Branch `feature/claude-code-provider` adds a provider-neutral assistant router while keeping Codex as the default.

@@ -2,7 +2,7 @@
 
 A Mac + iPhone prototype that connects Meta Ray-Ban glasses to **Codex, Claude Code, or Hermes running on the Mac**. It uses the selected CLI's existing account and model configuration rather than requiring credentials in the iPhone app.
 
-**This is a working development foundation, not a continuous live-video assistant.** It listens to a question, attaches a recent glasses camera image, and speaks the selected assistant's answer sentence by sentence as it is written. The iPhone pauses question dictation while answering, listens for enabled voice controls, then returns to question dictation. Answers can use an installed Apple voice on the iPhone or the optional local Kokoro model on the Mac. A real ChatGPT Plus image question has passed; Claude Code and physical glasses validation are still required.
+**This is a working development foundation, not a continuous live-video assistant.** It listens to a question, attaches a recent camera image from the glasses — or from the iPhone itself when the glasses are not connected — and speaks the selected assistant's answer sentence by sentence as it is written. The iPhone pauses question dictation while answering, listens for enabled voice controls, then returns to question dictation. Answers can use an installed Apple voice on the iPhone or the optional local Kokoro model on the Mac. A real ChatGPT Plus image question has passed; Claude Code and physical glasses validation are still required.
 
 ## Why this architecture
 
@@ -44,12 +44,22 @@ The checked-in Xcode project is `ios/RayBridge.xcodeproj`. It requires iOS 18+, 
 2. Install Meta AI on the iPhone and pair the glasses there. Enable **Developer Mode** for the glasses. The included `MWDAT.MetaAppID = 0` is for that developer flow. For a release-channel build, replace the Meta app ID/client token and configure the project in Meta's developer console; do not ship the placeholder values. See [Meta registration documentation](https://github.com/facebook/meta-wearables-dat-ios/blob/main/plugins/mwdat-ios/skills/permissions-registration/SKILL.md).
 3. Select the physical iPhone in Xcode and Run. Complete iPhone development trust/setup if prompted.
 4. Scan the Mac pairing QR with the iPhone Camera. RayBridge opens with the link filled in; select **Pair Mac** in **Setup**. Alternatively, open **Setup** and copy the link into RayBridge's pairing field. The token is stored in the iPhone Keychain.
-5. In **Setup**, select **Register with Meta AI** and complete registration, then select **Done**. Ensure glasses audio is connected in iOS Bluetooth.
+5. In **Setup**, select **Register with Meta AI** and complete registration, then select **Done**. Ensure glasses audio is connected in iOS Bluetooth. To run without glasses entirely, skip this step and set **Setup → Camera and audio → Use** to **This iPhone**.
 6. Select **Start RayBridge**. It connects to your saved Mac, checks microphone/speech permissions, starts the glasses camera, waits for a usable image, and begins listening. Grant camera access in Meta AI if requested, then return to RayBridge. Wait for **Glasses camera connected**, ask a question, pause, and wait for the spoken answer. On subsequent launches, just select **Start RayBridge**.
+
+### Running without glasses
+
+RayBridge does not require glasses. If the glasses are not registered, not found, not connected, still connecting, or need an update, **Start RayBridge** warns that the glasses aren’t connected and offers three choices: **Continue without glasses**, **Try glasses anyway**, and **Cancel**. The warning is posted to VoiceOver and, when VoiceOver is off, spoken aloud; in hands-free standby, saying “start” continues without glasses and “cancel” dismisses the warning. If the glasses camera or glasses audio instead fails partway through startup, the same offer appears with the underlying failure.
+
+Continuing without glasses uses this iPhone's back camera for question images and the iPhone for speech, cues, and answers. Images keep the same limits as the glasses path: one JPEG per second, at most 500 KB, and a question still requires an image no more than 2.5 seconds old. Point the back of the iPhone at what you want described. Answers play through the iPhone speaker, or through any headset connected to the iPhone.
+
+**Setup → Camera and audio** makes the choice permanent in either direction. **This iPhone** skips the glasses check, the warning, and Meta registration entirely, which is the mode to use if you do not own the glasses. **Meta glasses** restores the default. Granting RayBridge iPhone camera access is requested the first time this mode starts. A locked or backgrounded phone still suspends the session, and this mode is not hands-free: the iPhone has to be pointed by hand.
 
 English (US) **on-device** speech recognition is required for the voice prototype. If it is unavailable, typed questions still work. **Setup → Use iPhone audio for testing** explicitly allows phone audio when glasses are unavailable. Default operation requires a Bluetooth headset route. Bluetooth routing, SDK streaming, and speech recognition cannot be considered validated by a successful simulator build.
 
 **Setup → Sound cues → Listen for voice commands** is on by default. Say “start” to begin from hands-free standby, “stop” to end RayBridge, or “cancel” during thinking or speech to abandon the current turn and return to listening. “Mute” lets the current turn and answer continue while ignoring everything except “unmute.” RayBridge immediately speaks a short confirmation for every recognized command. Mute and Unmute briefly pause a playing Apple or Kokoro answer for the confirmation, then resume it. Commands must be spoken as standalone words, which preserves questions such as “Where is the bus stop?” **Listen for Start while stopped** is also on by default and keeps the microphone active for Start while RayBridge is stopped. All voice commands require RayBridge to remain open in the foreground; they do not provide background or locked-phone listening. Cancel cannot undo computer actions Codex already completed. Echo suppression and command recognition must be validated on the actual glasses.
+
+Without glasses, the microphone, speech, and camera all belong to the iPhone, so a disconnected Bluetooth headset no longer stops the session. The **Use iPhone audio for testing** toggle remains for testing the glasses camera with iPhone audio.
 
 The large **Stop RayBridge** control stops the microphone, speech, camera, pending model answer, and Mac connection. It also cancels startup. Wait for camera teardown to finish before starting again. Each Start opens a new Mac conversation; previous transcript/answer text remains visible until you select **New conversation**. Backgrounding stops the session, except during the Meta AI camera-permission handoff; select **Start RayBridge** when returning. Background operation and a locked-phone experience are not implemented.
 
@@ -140,7 +150,7 @@ See [hardware acceptance checks](docs/hardware-checks.md) before relying on the 
 ```text
 bridge/       Local HTTPS phone bridge, assistant adapters, Mac setup UI, tests
 mac/          Native AppKit/WebKit Mac wrapper
-ios/          SwiftUI app, Meta DAT camera, speech, pinned connection, Keychain pairing
+ios/          SwiftUI app, Meta DAT and iPhone cameras, speech, pinned connection, Keychain pairing
 scripts/      Source launcher and Mac app builder
 docs/         Architecture and physical-device acceptance checks
 ```
@@ -149,7 +159,7 @@ The remaining work to achieve the original fully real-time experience is substan
 
 ## iOS session lifecycle checks
 
-On a Mac with Xcode installed, run `bash scripts/test-ios-session.sh`. The hardware-independent Swift tests cover startup ordering, waiting for camera readiness before audio, duplicate taps, full teardown, and Stop or failure during each startup stage. `bash scripts/test-ios-answer-stream.sh` covers what remains to be spoken when an answer completes after some of it was already spoken. These checks do not replace physical-glasses testing.
+On a Mac with Xcode installed, run `bash scripts/test-ios-session.sh`. The hardware-independent Swift tests cover startup ordering, waiting for camera readiness before audio, duplicate taps, full teardown, and Stop or failure during each startup stage. `bash scripts/test-ios-capture-source.sh` covers the no-glasses decisions: which glasses states warn, which actions each warning offers, the saved iPhone preference, and which startup failures offer the iPhone instead. `bash scripts/test-ios-answer-stream.sh` covers what remains to be spoken when an answer completes after some of it was already spoken. These checks do not replace physical-glasses testing.
 
 `bash scripts/test-ios-pairing-host.sh` covers the pairing host rule: private LAN, link-local, and tailnet addresses and `.ts.net` MagicDNS names are accepted, while public addresses, the ranges just outside 100.64.0.0/10, every other hostname, and malformed labels or leading-zero quads are rejected.
 
@@ -160,3 +170,6 @@ For the unified Start/Stop flow, verify on the iPhone:
 3. Tap Stop during startup. Confirm it stays stopped after any outstanding permission dialog or SDK callback completes.
 4. With the Mac unavailable, verify startup reports the connection error and allows a fresh Start after the Mac is available.
 5. Open **Setup** while stopped and confirm pairing and registration are retained.
+6. With the glasses off or disconnected, tap **Start RayBridge**. Confirm the spoken and VoiceOver warning, then **Continue without glasses** and ask a visual question about what the iPhone's back camera sees.
+7. Set **Setup → Camera and audio → Use** to **This iPhone**, relaunch, and confirm Start goes straight to the iPhone camera with no warning and no registration requirement.
+8. With the glasses connected, confirm Start still uses them and that the camera confirmation says **Glasses camera connected**.

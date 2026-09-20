@@ -40,10 +40,10 @@ struct ContentView: View {
                             .font(.title2.bold()).frame(maxWidth: .infinity, minHeight: 76)
                     }.buttonStyle(.borderedProminent).tint(green)
                         .disabled(model.sessionPhase == .stopping)
-                        .accessibilityHint(model.sessionActive ? "Stops the camera, microphone, speech, and Mac connection." : "Connects to your Mac and glasses camera, then starts listening for your question.")
+                        .accessibilityHint(model.sessionActive ? "Stops the camera, microphone, speech, and Mac connection." : "Connects to your Mac and the glasses camera, or offers this iPhone when the glasses aren’t connected, then starts listening for your question.")
                     if let error = model.error { Text(error).foregroundStyle(.red).accessibilityLabel("Error: \(error)") }
                     Text(model.cameraStatus).accessibilityLabel("Camera status: \(model.cameraStatus)")
-                    Text("Tap Start RayBridge, wait for the camera confirmation, then ask your question. Stop RayBridge ends the entire session.").font(.body)
+                    Text("Tap Start RayBridge, wait for the camera confirmation, then ask your question. Stop RayBridge ends the entire session. If your glasses aren’t connected, RayBridge offers to continue with this iPhone’s camera and speaker.").font(.body)
                     GroupBox("Conversation") {
                         VStack(alignment: .leading, spacing: 12) {
                             if !model.transcript.isEmpty { Text("You: \(model.transcript)") }
@@ -66,6 +66,23 @@ struct ContentView: View {
                         .disabled(model.sessionActive)
                         .accessibilityHint("Pair your Mac, register your glasses, or change the test audio setting.")
                 }
+            }
+            .alert(Text(model.glassesWarning?.title ?? ""),
+                   isPresented: Binding(get: { model.glassesWarning != nil },
+                                        set: { if !$0 { model.dismissGlassesWarning() } }),
+                   presenting: model.glassesWarning) { warning in
+                if warning.actions.contains(.continueWithoutGlasses) {
+                    Button("Continue without glasses") { model.continueWithoutGlasses() }
+                }
+                if warning.actions.contains(.tryGlassesAnyway) {
+                    Button("Try glasses anyway") { model.tryGlassesAnyway() }
+                }
+                if warning.actions.contains(.openSetup) {
+                    Button("Open Setup") { model.dismissGlassesWarning(); model.showingSetup = true }
+                }
+                Button("Cancel", role: .cancel) { model.dismissGlassesWarning() }
+            } message: { warning in
+                Text(warning.message)
             }
             .sheet(isPresented: $model.showingSetup) { SetupView(model: model) }
             .buttonStyle(.bordered).controlSize(.large)
@@ -95,7 +112,19 @@ struct SetupView: View {
                     Text(model.registrationStatus.isEmpty ? "Register your glasses to begin." : model.registrationStatus)
                     Button("Register with Meta AI") { model.registerGlasses() }
                         .disabled(model.sessionActive || model.registeringGlasses || !model.registrationStatus.isEmpty)
-                    Text("Pair your glasses in Meta AI, enable Developer Mode, and complete any installation it offers. Camera permission is requested when you first start RayBridge.")
+                    Text("Pair your glasses in Meta AI, enable Developer Mode, and complete any installation it offers. Camera permission is requested when you first start RayBridge. Registration is only needed for the glasses camera; RayBridge also runs on this iPhone alone.")
+                }
+                Section("Camera and audio") {
+                    Picker("Use", selection: $model.preferredCaptureSource) {
+                        ForEach(CaptureSource.allCases) { source in
+                            Text(source.displayName).tag(source)
+                        }
+                    }
+                    .disabled(model.sessionActive)
+                    .accessibilityHint("Selects whether RayBridge uses the glasses camera and glasses audio, or this iPhone’s camera and speaker.")
+                    Text(model.preferredCaptureSource == .glasses
+                         ? "RayBridge uses the glasses camera and glasses audio. If the glasses aren’t connected when you start, it warns you and offers to continue with this iPhone instead."
+                         : "RayBridge uses this iPhone’s camera, speaker, and microphone. Glasses are not needed, and registration is not required. Point the back of the iPhone at what you want described.")
                 }
                 Section("Assistant") {
                     Picker("Assistant", selection: $model.assistantProvider) {
@@ -112,7 +141,7 @@ struct SetupView: View {
                         .disabled(model.sessionActive)
                         .accessibilityHint("When off, RayBridge sends an image only when your question appears to ask about your surroundings. Say use the camera to always include one.")
                     Text(model.alwaysSendCameraImage
-                         ? "Every question includes a current image from the glasses camera."
+                         ? "Every question includes a current image from the selected camera."
                          : "RayBridge sends an image only for questions that appear visual. Say “use the camera” to always include one.")
                 }
                 Section("Sound cues") {
