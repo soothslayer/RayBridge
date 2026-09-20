@@ -14,7 +14,7 @@ struct SpeechVoiceOption: Identifiable, Hashable {
 final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     var onVoiceCommand: ((VoiceCommand) -> Void)?
     var voiceCommandsEnabled = true
-    var questionCommands: Set<VoiceCommand> = [.stop, .cancel, .mute]
+    var questionCommands: Set<VoiceCommand> = [.stop, .cancel, .mute, .commands]
     private var commandRestart: Task<Void, Never>?
     private var commandFailures = 0
     var onQuestion: ((String) -> Void)?
