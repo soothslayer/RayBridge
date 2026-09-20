@@ -32,13 +32,16 @@ private final class PhoneCaptureEngine: NSObject, AVCaptureVideoDataOutputSample
         lock.lock(); frameHandler = handler; lock.unlock()
     }
 
-    func start() async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+    func start() async throws -> Bool {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
             queue.async { [self] in
                 do {
                     try configureIfNeeded()
+                    if session.isMultitaskingCameraAccessSupported {
+                        session.isMultitaskingCameraAccessEnabled = true
+                    }
                     if !session.isRunning { session.startRunning() }
-                    continuation.resume()
+                    continuation.resume(returning: session.isMultitaskingCameraAccessEnabled)
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -152,6 +155,7 @@ final class PhoneCamera: CameraSource {
     private var generation = 0
     private var receivedFrame = false
     private var capturing = false
+    private(set) var keepsCameraWhileBackgrounded = false
     private var observers: [NSObjectProtocol] = []
 
     init() {
@@ -193,7 +197,12 @@ final class PhoneCamera: CameraSource {
         }
         do {
             RayBridgeDiagnostics.event("Starting iPhone camera capture")
-            try await engine.start()
+            keepsCameraWhileBackgrounded = try await engine.start()
+            if keepsCameraWhileBackgrounded {
+                RayBridgeDiagnostics.event("iPhone camera supports multitasking capture")
+            } else {
+                RayBridgeDiagnostics.event("iPhone camera will pause while app is backgrounded")
+            }
             capturing = true
             try Task.checkCancellation()
             // A frame can arrive before startRunning() returns. Do not clear it

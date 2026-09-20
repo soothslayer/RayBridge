@@ -87,7 +87,11 @@ struct CaptureSourcePolicyTests {
         ) == .continueGlassesSession, "An active glasses session must survive backgrounding")
         precondition(CaptureSourcePolicy.backgroundAction(
             sessionActive: true, source: .phone, awaitingGlassesPermission: false
-        ) == .stopPhoneSession, "The built-in camera cannot capture in the background")
+        ) == .continuePhoneAudioSession, "The iPhone session must keep its audio path alive")
+        precondition(CaptureSourcePolicy.backgroundAction(
+            sessionActive: true, source: .phone, awaitingGlassesPermission: false,
+            phoneCameraSupportsBackground: true
+        ) == .continuePhoneCameraSession, "Supported devices must keep the iPhone camera alive")
         precondition(CaptureSourcePolicy.backgroundAction(
             sessionActive: false, source: .glasses, awaitingGlassesPermission: false
         ) == .stopStandbyListening, "Stopped-app standby must not keep the app alive")

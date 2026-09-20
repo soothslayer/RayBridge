@@ -55,7 +55,7 @@ struct ContentView: View {
                                 .accessibilityHint("Stops RayBridge and clears this conversation. Tap Start RayBridge to begin a new one.")
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
                     }
-                    Text("Camera: \(model.preferredCaptureSource.displayName). Active Meta-glasses sessions can continue while this iPhone is locked. The Mac must remain awake.").font(.footnote)
+                    Text("Camera: \(model.preferredCaptureSource.displayName). Active sessions continue while this iPhone is locked. The built-in iPhone camera pauses in the background, but voice questions and answers remain available. The Mac must remain awake.").font(.footnote)
                 }.padding(22)
             }
             .background(Color(red: 0.97, green: 0.98, blue: 0.95))
@@ -145,11 +145,11 @@ struct SetupView: View {
                     .accessibilityHint("Selects whether RayBridge uses the glasses camera and glasses audio, or this iPhone’s camera and speaker.")
                     Text(model.preferredCaptureSource == .glasses
                          ? "RayBridge uses the glasses camera and glasses audio. An active session continues when this iPhone is locked or another app is open. If the glasses aren’t connected when you start, RayBridge offers to continue with this iPhone instead."
-                         : "RayBridge uses this iPhone’s camera, speaker, and microphone. Glasses are not needed, and registration is not required. Point the back camera at what you want described. The session stops if this iPhone is locked or another app is opened because iOS pauses its camera in the background.")
+                         : "RayBridge uses this iPhone’s camera, speaker, and microphone. Glasses are not needed, and registration is not required. Point the back camera at what you want described. When iOS cannot keep the camera active in the background, RayBridge pauses only the camera: voice questions, commands, Mac connection, and answers continue, and the camera restarts when you return.")
                 }
                 Section("Build") {
                     Text(Self.buildDescription)
-                    Text("Background operation requires Camera and audio to be set to Meta glasses before starting RayBridge.")
+                    Text("Meta glasses keep camera images available in the background. This iPhone keeps the voice session available and restores its camera when RayBridge returns to the foreground.")
                 }
                 Section("Assistant") {
                     Picker("Assistant", selection: $model.assistantProvider) {
