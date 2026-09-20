@@ -17,8 +17,20 @@ enum VoiceCommandPolicy {
     static let launchAnnouncement =
         "RayBridge is stopped. Tap Start RayBridge, or say Start to begin. For a list of voice commands, say Commands."
 
-    static let helpAnnouncement =
-        "You can say Start when RayBridge is stopped. While RayBridge is running, say Stop to end it, Cancel to cancel the current question or answer, Status to hear the current task status, Repeat to hear the latest completed answer again, or Mute to ignore voice input. When muted, say Unmute to resume. Say Commands to hear this list again."
+    // Each phrase is spoken as its own utterance so command names do not run
+    // together. SpeechController adds a short pause after every phrase.
+    static let helpAnnouncementPhrases = [
+        "Say Start when RayBridge is stopped.",
+        "Say Stop to end RayBridge.",
+        "Say Cancel to cancel the current question or answer.",
+        "Say Status to hear the current task status.",
+        "Say Repeat to hear the latest completed answer again.",
+        "Say Mute to ignore voice input.",
+        "When muted, say Unmute to resume.",
+        "Say Commands to hear this list again."
+    ]
+
+    static let helpAnnouncement = helpAnnouncementPhrases.joined(separator: " ")
 
     private static func words(_ text: String) -> [String] {
         text.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)

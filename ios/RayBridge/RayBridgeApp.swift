@@ -36,7 +36,7 @@ struct ContentView: View {
                     Text("Your world, in words.").font(.largeTitle.bold())
                     Text(model.status).font(.title3).accessibilityLabel("Assistant status: \(model.status)")
                     Button {
-                        if model.sessionActive { model.stop() } else { model.start() }
+                        if model.sessionActive { model.stopFromButton() } else { model.startFromButton() }
                     } label: {
                         Label(model.sessionPhase == .stopping ? "Stopping…" : model.sessionActive ? "Stop RayBridge" : "Start RayBridge", systemImage: model.sessionActive ? "stop.circle.fill" : "play.circle.fill")
                             .font(.title2.bold()).frame(maxWidth: .infinity, minHeight: 76)

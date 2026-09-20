@@ -402,9 +402,12 @@ final class AppModel: ObservableObject {
         do {
             let pairing = try Pairing(link: pairingText)
             guard !sessionActive else { return }
-            try pairing.save(); refreshPairings(); pairingText = ""; error = nil
-            status = "Mac paired. Tap Start RayBridge to begin."
+            try save(pairing)
         } catch { fail(error.localizedDescription) }
+    }
+    private func save(_ pairing: Pairing) throws {
+        try pairing.save(); refreshPairings(); pairingText = ""; error = nil
+        status = "Mac paired. Tap Start RayBridge to begin."
     }
     func selectPairedMac(id: String) {
         guard !sessionActive, id != selectedPairingID else { return }
@@ -441,8 +444,16 @@ final class AppModel: ObservableObject {
     }
     func handle(_ url: URL) {
         if url.host == "pair" {
-            stop(); pairingText = url.absoluteString; showingSetup = true
-            status = "Pairing link received. Tap Pair Mac in Setup."
+            if sessionActive { stop() }
+            do {
+                try save(Pairing(link: url.absoluteString))
+                showingSetup = false
+                UIAccessibility.post(notification: .announcement, argument: status)
+            } catch {
+                pairingText = url.absoluteString
+                showingSetup = true
+                fail(error.localizedDescription)
+            }
         }
         else { Task { do { try await camera.handle(url) } catch { fail(error.localizedDescription) } } }
     }
@@ -614,6 +625,21 @@ final class AppModel: ObservableObject {
             present(CaptureSourcePolicy.warning(for: readiness), announce: true)
         }
     }
+    func startFromButton() {
+        guard !sessionActive else { return }
+        RayBridgeDiagnostics.event("Start RayBridge button pressed")
+        launchAnnouncementPending = false
+        status = "Starting RayBridge…"
+        let announcement = "Starting RayBridge."
+        UIAccessibility.post(notification: .announcement, argument: announcement)
+        guard !UIAccessibility.isVoiceOverRunning else {
+            start()
+            return
+        }
+        confirmVoiceCommand(announcement, preservingCurrentOutput: false) { [weak self] in
+            self?.start()
+        }
+    }
     func startFromSystemRequest() {
         RayBridgeDiagnostics.event("System Start RayBridge request received")
         launchAnnouncementPending = false
@@ -681,6 +707,20 @@ final class AppModel: ObservableObject {
         phoneCameraPausedForBackground = false
         phoneCameraTransition?.cancel(); phoneCameraTransition = nil
         session.stop()
+    }
+    func stopFromButton() {
+        guard sessionActive else { return }
+        RayBridgeDiagnostics.event("Stop RayBridge button pressed")
+        status = "Stopping RayBridge…"
+        let announcement = "Stopping RayBridge."
+        UIAccessibility.post(notification: .announcement, argument: announcement)
+        guard !UIAccessibility.isVoiceOverRunning else {
+            stop()
+            return
+        }
+        confirmVoiceCommand(announcement, preservingCurrentOutput: false) { [weak self] in
+            self?.stop()
+        }
     }
     private func refreshStandbyListening() {
         guard !sessionActive else { return }
@@ -765,7 +805,8 @@ final class AppModel: ObservableObject {
         let previousStatus = status
         let preservingOutput = running && (busy || speech.isSpeaking)
         confirmVoiceCommand(
-            VoiceCommandPolicy.helpAnnouncement,
+            VoiceCommandPolicy.helpAnnouncementPhrases,
+            pauseBetweenPhrases: 0.25,
             preservingCurrentOutput: preservingOutput
         ) { [weak self] in
             guard let self else { return }
@@ -787,6 +828,18 @@ final class AppModel: ObservableObject {
         preservingCurrentOutput: Bool,
         completion: @escaping () -> Void
     ) {
+        confirmVoiceCommand(
+            [message],
+            pauseBetweenPhrases: 0,
+            preservingCurrentOutput: preservingCurrentOutput,
+            completion: completion)
+    }
+    private func confirmVoiceCommand(
+        _ phrases: [String],
+        pauseBetweenPhrases: TimeInterval,
+        preservingCurrentOutput: Bool,
+        completion: @escaping () -> Void
+    ) {
         commandConfirmationPending = true
         speech.allowPhoneAudio = sessionActive ? usePhoneAudio : true
         let finish = { [weak self] in
@@ -802,7 +855,8 @@ final class AppModel: ObservableObject {
         }
         do {
             try speech.speakCommandConfirmation(
-                message,
+                phrases,
+                pauseBetweenPhrases: pauseBetweenPhrases,
                 preservingCurrentOutput: preservingCurrentOutput,
                 completion: finish)
         } catch {
