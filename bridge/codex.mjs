@@ -17,16 +17,29 @@ export const localSandboxPolicy = { type: 'dangerFullAccess' };
 // Approvals should not be requested at all under that policy. These are the
 // backstop for anything that still asks, so a request cannot leave the user in
 // silence. Values follow the app-server protocol schema.
-export const localServerResponses = {
-  'item/commandExecution/requestApproval': { decision: 'acceptForSession' },
-  'item/fileChange/requestApproval': { decision: 'acceptForSession' },
-  'item/permissions/requestApproval': {
-    permissions: { fileSystem: { write: ['/'] }, network: { enabled: true } }, scope: 'session'
-  },
+export function localServerResponse(method, params = {}) {
+  if (method === 'item/commandExecution/requestApproval' || method === 'item/fileChange/requestApproval')
+    return { decision: 'acceptForSession' };
+  if (method === 'item/permissions/requestApproval') {
+    // Grant exactly what Codex requested. The generated protocol requires both
+    // legacy filesystem keys even when only one side of the request is present.
+    const requested = params.permissions || {};
+    const permissions = {};
+    if (requested.network)
+      permissions.network = { ...requested.network };
+    if (requested.fileSystem)
+      permissions.fileSystem = {
+        ...requested.fileSystem,
+        read: requested.fileSystem.read ?? null,
+        write: requested.fileSystem.write ?? null
+      };
+    return { permissions, scope: 'session' };
+  }
   // An elicitation asks the user for data rather than for permission, so there
   // is no answer to invent. Declining lets the turn continue instead of hanging.
-  'mcpServer/elicitation/request': { action: 'decline', content: null }
-};
+  if (method === 'mcpServer/elicitation/request')
+    return { action: 'decline', content: null, _meta: null };
+}
 
 export function localCodexCandidates(fallback, environment = process.env) {
   if (environment.RAYBRIDGE_LOCAL_CODEX) return [environment.RAYBRIDGE_LOCAL_CODEX];
@@ -148,8 +161,11 @@ export class CodexClient extends EventEmitter {
         // A request that only needs permission is granted here. One that needs a
         // person to type an answer, such as item/tool/requestUserInput, still
         // fails closed rather than having an answer invented for them.
-        if (this.accountSource === 'local' && localServerResponses[message.method])
-          this.write({ id: message.id, result: localServerResponses[message.method] });
+        const response = this.accountSource === 'local'
+          ? localServerResponse(message.method, message.params)
+          : undefined;
+        if (response)
+          this.write({ id: message.id, result: response });
         else this.write({ id: message.id, error: { code: -32601, message: 'This request needs direct confirmation on the Mac.' } });
       } else if (message.id !== undefined) {
         const request = this.pending.get(message.id);

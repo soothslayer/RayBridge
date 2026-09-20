@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { CodexClient, codexLaunch, localCodexCandidates, localServerResponses, validateAllowedApps } from '../codex.mjs';
+import { CodexClient, codexLaunch, localCodexCandidates, localServerResponse, validateAllowedApps } from '../codex.mjs';
 
 test('isolated account uses RayBridge CODEX_HOME and file credentials', () => {
   const launch = codexLaunch('/private/raybridge/codex', 'raybridge', {
@@ -77,14 +77,21 @@ test('local runtime candidates include installed apps, CLI paths, and bundled fa
 test('local turns answer approval requests instead of stopping for a person', () => {
   // Nothing should ask under danger-full-access, but a request that slips
   // through must not leave a blind user waiting on a prompt they cannot see.
-  assert.deepEqual(localServerResponses['item/commandExecution/requestApproval'], { decision: 'acceptForSession' });
-  assert.deepEqual(localServerResponses['item/fileChange/requestApproval'], { decision: 'acceptForSession' });
-  assert.equal(localServerResponses['item/permissions/requestApproval'].scope, 'session');
-  assert.equal(localServerResponses['item/permissions/requestApproval'].permissions.network.enabled, true);
+  assert.deepEqual(localServerResponse('item/commandExecution/requestApproval'), { decision: 'acceptForSession' });
+  assert.deepEqual(localServerResponse('item/fileChange/requestApproval'), { decision: 'acceptForSession' });
+  const grant = localServerResponse('item/permissions/requestApproval', { permissions: {
+    network: { enabled: true }, fileSystem: { write: ['/Users/test'] }
+  } });
+  assert.deepEqual(grant, { permissions: {
+    network: { enabled: true },
+    fileSystem: { read: null, write: ['/Users/test'] }
+  }, scope: 'session' });
   // An elicitation wants typed data, not permission; declining keeps the turn moving.
-  assert.equal(localServerResponses['mcpServer/elicitation/request'].action, 'decline');
+  assert.deepEqual(localServerResponse('mcpServer/elicitation/request'), {
+    action: 'decline', content: null, _meta: null
+  });
   // A request needing a typed answer has no entry, so it still fails closed.
-  assert.equal(localServerResponses['item/tool/requestUserInput'], undefined);
+  assert.equal(localServerResponse('item/tool/requestUserInput'), undefined);
 });
 
 test('the vision-only RayBridge account keeps its restrictions', () => {
