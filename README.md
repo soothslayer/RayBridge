@@ -43,7 +43,7 @@ The checked-in Xcode project is `ios/RayBridge.xcodeproj`. It requires iOS 18+, 
 1. Open the Xcode project. Select the RayBridge target and your Apple development team in Signing & Capabilities. Choose a unique bundle identifier if required.
 2. Install Meta AI on the iPhone and pair the glasses there. Enable **Developer Mode** for the glasses. The included `MWDAT.MetaAppID = 0` is for that developer flow. For a release-channel build, replace the Meta app ID/client token and configure the project in Meta's developer console; do not ship the placeholder values. See [Meta registration documentation](https://github.com/facebook/meta-wearables-dat-ios/blob/main/plugins/mwdat-ios/skills/permissions-registration/SKILL.md).
 3. Select the physical iPhone in Xcode and Run. Complete iPhone development trust/setup if prompted.
-4. Scan the Mac pairing QR with the iPhone Camera. RayBridge opens with the link filled in; select **Pair Mac** in **Setup**. Alternatively, open **Setup** and copy the link into RayBridge's pairing field. The token is stored in the iPhone Keychain.
+4. Scan the Mac pairing QR with the iPhone Camera. RayBridge opens with the link filled in; select **Pair Mac** in **Setup**. Alternatively, open **Setup** and copy the link into RayBridge's pairing field. Pairing tokens are stored in the iPhone Keychain. RayBridge remembers the five most recently paired Macs; use **Setup → Your Mac → Active Mac** to switch the Mac used by the next session.
 5. In **Setup**, select **Register with Meta AI** and complete registration, then select **Done**. Ensure glasses audio is connected in iOS Bluetooth. To run without glasses entirely, skip this step and set **Setup → Camera and audio → Use** to **This iPhone**.
 6. Select **Start RayBridge**. It connects to your saved Mac, checks microphone/speech permissions, starts the glasses camera, waits for a usable image, and begins listening. Grant camera access in Meta AI if requested, then return to RayBridge. Wait for **Glasses camera connected**, ask a question, pause, and wait for the spoken answer. On subsequent launches, just select **Start RayBridge**.
 
@@ -162,6 +162,8 @@ The remaining work to achieve the original fully real-time experience is substan
 On a Mac with Xcode installed, run `bash scripts/test-ios-session.sh`. The hardware-independent Swift tests cover startup ordering, waiting for camera readiness before audio, duplicate taps, full teardown, and Stop or failure during each startup stage. `bash scripts/test-ios-capture-source.sh` covers the no-glasses decisions: which glasses states warn, which actions each warning offers, the saved iPhone preference, and which startup failures offer the iPhone instead. `bash scripts/test-ios-answer-stream.sh` covers what remains to be spoken when an answer completes after some of it was already spoken. These checks do not replace physical-glasses testing.
 
 `bash scripts/test-ios-pairing-host.sh` covers the pairing host rule: private LAN, link-local, and tailnet addresses and `.ts.net` MagicDNS names are accepted, while public addresses, the ranges just outside 100.64.0.0/10, every other hostname, and malformed labels or leading-zero quads are rejected.
+
+`bash scripts/test-ios-pairing-history.sh` covers the five-Mac history limit, active-Mac selection, credential replacement when a Mac is paired again, and recovery from duplicate or stale saved entries.
 
 For the unified Start/Stop flow, verify on the iPhone:
 

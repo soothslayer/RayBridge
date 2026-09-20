@@ -26,6 +26,8 @@ Connect to `wss://<private-ip>:8845/v1/connect` using `Authorization: Bearer <pa
 
 The paired host must be an IPv4 dotted quad in a private LAN range (10/8, 172.16/12, 192.168/16), the link-local range (169.254/16), or the shared range Tailscale uses for tailnet addresses (100.64/10), or a Tailscale MagicDNS name under `.ts.net`. Public addresses and all other hostnames are rejected, so the bridge cannot be paired to a public tunnel endpoint. The Mac reads its own MagicDNS name from `tailscale status --json` (`Self.DNSName`), caches it for 30 seconds against the setup page's polling, and `/api/pair` accepts only an address on one of its interfaces or that one name. Because the pinned certificate rather than the name authenticates the Mac, the self-signed certificate needs no `.ts.net` subject name; the iPhone carries an App Transport Security exception for `.ts.net` so the pinning delegate is reached, which relaxes neither TLS nor the pin. A tailnet is an encrypted point-to-point tunnel that carries the Mac's own certificate unchanged, so remote access keeps the same pinned, token-authenticated connection as the LAN path. A tunnel that terminates TLS at a third-party edge, such as ngrok or Tailscale Funnel, would break pinning and disclose the token, questions, images, and answers to the tunnel operator.
 
+The iPhone keeps the five most recently paired Mac endpoints and their tokens and certificate fingerprints in its device-only Keychain record. One endpoint is active at a time and can be changed in Setup while no session is running. Pairing the same host and port again replaces its credentials and moves it to the top; existing one-Mac Keychain records migrate automatically.
+
 Phone messages:
 
 | Type | Fields | Behavior |
