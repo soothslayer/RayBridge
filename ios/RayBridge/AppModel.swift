@@ -625,6 +625,21 @@ final class AppModel: ObservableObject {
             present(CaptureSourcePolicy.warning(for: readiness), announce: true)
         }
     }
+    func startFromButton() {
+        guard !sessionActive else { return }
+        RayBridgeDiagnostics.event("Start RayBridge button pressed")
+        launchAnnouncementPending = false
+        status = "Starting RayBridge…"
+        let announcement = "Starting RayBridge."
+        UIAccessibility.post(notification: .announcement, argument: announcement)
+        guard !UIAccessibility.isVoiceOverRunning else {
+            start()
+            return
+        }
+        confirmVoiceCommand(announcement, preservingCurrentOutput: false) { [weak self] in
+            self?.start()
+        }
+    }
     func startFromSystemRequest() {
         RayBridgeDiagnostics.event("System Start RayBridge request received")
         launchAnnouncementPending = false
