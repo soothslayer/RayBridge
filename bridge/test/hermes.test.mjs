@@ -52,9 +52,11 @@ test('Hermes uses a private named conversation, stdin prompt, and attached camer
   launches[0].child.exitCode = 0;
   launches[0].child.emit('close', 0);
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(events.map(x => x.method), ['turn/started', 'item/completed', 'turn/completed']);
+  assert.deepEqual(events.map(x => x.method), ['turn/started', 'item/delta', 'item/completed', 'turn/completed']);
+  // Written text is offered for speech before Hermes exits.
   assert.equal(events[1].params.item.text, 'A blue chair.');
-  assert.equal(events[2].params.turn.status, 'completed');
+  assert.equal(events[2].params.item.text, 'A blue chair.');
+  assert.equal(events[3].params.turn.status, 'completed');
   const second = await client.ask(threadId, 'And now?', null);
   assert.ok(launches[1].args.includes(`raybridge-${threadId}`));
   assert.ok(!launches[1].args.includes('--image'));

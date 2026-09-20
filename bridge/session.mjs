@@ -1,5 +1,19 @@
+import { TurnTiming } from './timing.mjs';
+
 export const MAX_FRAME_BYTES = 500_000;
 export const FRAME_MAX_AGE_MS = 3500;
+export const ACCOUNT_CACHE_MS = 300_000;
+// A partial answer is released only at a sentence ending so the phone speaks
+// whole sentences while the rest of the answer is still being written.
+const SENTENCE_END = /[.!?\u2026]["'\u201d\u2019)\]]*\s|\n+/g;
+
+export function splitSpokenChunk(pending) {
+  SENTENCE_END.lastIndex = 0;
+  let boundary = 0;
+  for (let match = SENTENCE_END.exec(pending); match; match = SENTENCE_END.exec(pending))
+    boundary = SENTENCE_END.lastIndex;
+  return boundary ? [pending.slice(0, boundary), pending.slice(boundary)] : ['', pending];
+}
 
 export function validJPEG(value) {
   if (typeof value !== 'string' || value.length > Math.ceil(MAX_FRAME_BYTES / 3) * 4 ||
@@ -11,11 +25,29 @@ export function validJPEG(value) {
 
 // One conversation per authenticated phone connection, one turn at a time.
 export class PhoneSession {
-  constructor(assistant, send, { now = Date.now, turnTimeout = 90000, tts = null } = {}) {
+  constructor(assistant, send, { now = Date.now, turnTimeout = 90000, tts = null,
+    account = null, accountCacheMs = ACCOUNT_CACHE_MS, log } = {}) {
     this.assistant = assistant; this.send = send; this.now = now; this.turnTimeout = turnTimeout; this.tts = tts;
+    this.accountCacheMs = accountCacheMs;
+    this.log = log;
+    // The connection handshake already proved the account. Re-reading it for
+    // every question costs a CLI subprocess or an extra RPC before the model
+    // can even start, so a signed-in result is reused for a short while.
+    this.cachedAccount = account?.signedIn ? { account, at: now() } : null;
     this.cancelledTurns = new Set();
     this.listener = message => this.notification(message);
     assistant.on('notification', this.listener);
+  }
+  async signedInAccount() {
+    const cached = this.cachedAccount;
+    if (cached && this.now() - cached.at <= this.accountCacheMs) return cached.account;
+    const account = await this.assistant.account();
+    if (!account.signedIn) {
+      this.cachedAccount = null;
+      throw new Error(account.signInMessage || 'Sign in to the selected assistant on the Mac first.');
+    }
+    this.cachedAccount = { account, at: this.now() };
+    return account;
   }
   async receive(message) {
     if (this.closed) return;
@@ -31,22 +63,26 @@ export class PhoneSession {
         if (typeof message.text !== 'string' || !message.text.trim() || message.text.length > 4000)
           throw new Error('Please ask a question of 1 to 4000 characters.');
         let finishStarting;
+        const timing = this.timing = new TurnTiming({ now: this.now,
+          ...(this.log ? { log: this.log } : {}) });
         this.starting = new Promise(resolve => { finishStarting = resolve; });
         const generation = this.generation = (this.generation || 0) + 1;
         try {
-          const account = await this.assistant.account();
-          if (!account.signedIn) throw new Error(account.signInMessage || 'Sign in to the selected assistant on the Mac first.');
+          await this.signedInAccount();
+          timing.mark('account');
           if (this.closed || generation !== this.generation) return;
           const threadId = this.threadId || await this.assistant.newThread();
+          timing.mark('conversation');
           if (this.closed || generation !== this.generation) return;
           this.threadId = threadId;
           const frame = this.frame && this.now() - this.frame.at <= FRAME_MAX_AGE_MS ? this.frame.jpeg : null;
-          this.active = { text: '', turnId: null,
+          this.active = { text: '', turnId: null, streamed: '', discards: 0, streaming: true,
             ttsEngine: message.ttsEngine === 'kokoro' ? 'kokoro' : 'apple',
             ttsVoice: typeof message.ttsVoice === 'string' ? message.ttsVoice : 'af_heart' };
           this.send({ type: 'thinking', hasImage: !!frame });
           this.timer = setTimeout(() => { this.cancel(); this.send({ type: 'error', message: 'The answer took too long. Please try again.' }); }, this.turnTimeout);
           const result = await this.assistant.ask(threadId, message.text.trim(), frame);
+          timing.mark('requestAccepted');
           if (this.closed || generation !== this.generation) {
             if (!this.cancelledTurns.has(result.turn.id)) {
               this.cancelledTurns.add(result.turn.id);
@@ -86,25 +122,66 @@ export class PhoneSession {
     if (p.turnId && this.active.turnId && p.turnId !== this.active.turnId) return;
     if (method === 'item/completed' && p.item?.type === 'agentMessage' && p.item.phase !== 'commentary')
       this.active.text = p.item.text;
+    // A growing answer is spoken sentence by sentence instead of waiting for the
+    // assistant process to finish and exit. The text is always the whole answer
+    // so far, so only adapters that promise that send it.
+    if (method === 'item/delta' && p.item?.type === 'agentMessage' &&
+      p.item.phase !== 'commentary' && typeof p.item.text === 'string')
+      this.partialAnswer(p.item.text);
+    // The assistant replaced the text it was writing, so anything already spoken
+    // was not the answer.
+    if (method === 'item/discarded') this.discardPartialAnswer();
     if (method === 'turn/completed') {
       if (this.active.turnId && p.turn.id !== this.active.turnId) return;
       const active = this.active;
       const text = active.text;
       clearTimeout(this.timer); this.active = null;
+      this.timing?.mark('answerComplete');
       if (p.turn.status === 'completed' && text) {
         if (active.ttsEngine === 'kokoro' && this.tts) void this.kokoroAnswer(text, active.ttsVoice, this.generation);
-        else this.send({ type: 'answer', text });
+        else { this.send({ type: 'answer', text }); this.timing?.report(); }
       }
-      else this.send({ type: 'error', message: p.turn.error?.message || 'The answer was interrupted or empty. Please try again.' });
+      else {
+        // A failed turn can mean the assistant was signed out since the handshake.
+        this.cachedAccount = null;
+        this.timing?.report();
+        this.send({ type: 'error', message: p.turn.error?.message || 'The answer was interrupted or empty. Please try again.' });
+      }
     }
+  }
+  // Partial text is only useful to a phone that speaks it locally. Kokoro
+  // generates one audio file on the Mac from the finished answer.
+  partialAnswer(text) {
+    const active = this.active;
+    if (!active || !active.streaming || active.ttsEngine === 'kokoro') return;
+    if (!text.startsWith(active.streamed)) return this.discardPartialAnswer();
+    const [chunk, rest] = splitSpokenChunk(text.slice(active.streamed.length));
+    if (!chunk) return;
+    active.streamed = text.slice(0, text.length - rest.length);
+    this.timing?.mark('firstSpokenSentence');
+    this.send({ type: 'answer.partial', text: chunk });
+  }
+  discardPartialAnswer() {
+    const active = this.active;
+    if (!active || !active.streamed) return;
+    active.streamed = '';
+    // Repeated restarts would stutter, so stop streaming after the second one
+    // and let the completed answer be spoken in full.
+    active.discards += 1;
+    if (active.discards > 2) active.streaming = false;
+    this.send({ type: 'answer.discard' });
   }
   async kokoroAnswer(text, voice, generation) {
     try {
       const audio = await this.tts.synthesize(text, voice);
-      if (!this.closed && generation === this.generation) this.send({ type: 'answer', text, audio });
+      this.timing?.mark('answerAudio');
+      if (!this.closed && generation === this.generation) { this.send({ type: 'answer', text, audio }); this.timing?.report(); }
     } catch (error) {
-      if (!this.closed && generation === this.generation)
+      this.timing?.mark('answerAudio');
+      if (!this.closed && generation === this.generation) {
         this.send({ type: 'answer', text, ttsFallback: error.message || 'Kokoro is unavailable.' });
+        this.timing?.report();
+      }
     }
   }
   cancel() {

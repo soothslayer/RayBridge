@@ -123,7 +123,7 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
   let allowedApps = [];
   try { allowedApps = validateAllowedApps(JSON.parse(await readFile(allowedAppsPath, 'utf8'))); } catch {}
   const codex = suppliedCodex || new CodexClient(path.join(dataDir, 'codex'), undefined, accountSource, workspace, allowedApps);
-  const claude = suppliedClaude || new ClaudeClient(path.join(dataDir, 'camera-frames'), undefined, workspace);
+  const claude = suppliedClaude || new ClaudeClient(undefined, workspace);
   const hermes = suppliedHermes || new HermesClient(path.join(dataDir, 'camera-frames'), undefined, workspace);
   const providerPath = path.join(dataDir, 'assistant-provider');
   let provider = 'codex';
@@ -205,7 +205,9 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
       closeTimer.unref();
       return;
     }
-    const session = new PhoneSession(assistant, send, { tts });
+    // The handshake above already read the account, so the session starts with
+    // that result instead of re-reading it for the first question.
+    const session = new PhoneSession(assistant, send, { tts, account });
     phones.set(ws, session);
     let windowStart = Date.now(), count = 0;
     ws.on('message', async (data, binary) => {
