@@ -528,6 +528,9 @@ final class AppModel: ObservableObject {
     }
     func foreground() {
         appIsActive = true
+        // Keychain items protected with WhenUnlocked can be unavailable if iOS
+        // created the model before the device was unlocked.
+        refreshPairings()
         // Teardown stops audio last, so wait for idle before speaking an error
         // that was saved while the app was in the background.
         if let message = pendingErrorAnnouncement, !sessionActive { speakError(message) }

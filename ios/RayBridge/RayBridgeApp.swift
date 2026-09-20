@@ -55,7 +55,7 @@ struct ContentView: View {
                                 .accessibilityHint("Stops RayBridge and clears this conversation. Tap Start RayBridge to begin a new one.")
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
                     }
-                    Text("Early prototype. Uses the assistant selected in Setup. Answers take turns and may be delayed. Keep this app open and the Mac awake.").font(.footnote)
+                    Text("Camera: \(model.preferredCaptureSource.displayName). Active Meta-glasses sessions can continue while this iPhone is locked. The Mac must remain awake.").font(.footnote)
                 }.padding(22)
             }
             .background(Color(red: 0.97, green: 0.98, blue: 0.95))
@@ -100,19 +100,26 @@ struct SetupView: View {
                     Text("Set up your Mac and glasses once. After that, use Start RayBridge on the main screen.")
                     if let error = model.error { Text(error).foregroundStyle(.red) }
                 }
-                Section("Your Mac") {
-                    if !model.pairedMacs.isEmpty {
-                        Picker("Active Mac", selection: Binding(
-                            get: { model.selectedPairingID },
-                            set: { model.selectPairedMac(id: $0) }
-                        )) {
-                            ForEach(model.pairedMacs) { pairing in
-                                Text(pairing.displayName).tag(pairing.id)
+                Section("Saved Macs") {
+                    if model.pairedMacs.isEmpty {
+                        Text("No saved Macs are available. Pair this phone again to add one.")
+                    } else {
+                        ForEach(model.pairedMacs) { pairing in
+                            Button {
+                                model.selectPairedMac(id: pairing.id)
+                            } label: {
+                                HStack {
+                                    Text(pairing.displayName)
+                                    Spacer()
+                                    if pairing.id == model.selectedPairingID {
+                                        Image(systemName: "checkmark").accessibilityLabel("Selected")
+                                    }
+                                }
                             }
+                            .disabled(model.sessionActive || pairing.id == model.selectedPairingID)
+                            .accessibilityHint("Selects this Mac for the next RayBridge session.")
                         }
-                        .disabled(model.sessionActive)
-                        .accessibilityHint("Selects which saved Mac RayBridge connects to when it starts.")
-                        Text("RayBridge remembers the five most recently paired Macs. Selecting one makes it active for the next session.")
+                        Text("RayBridge remembers the five most recently paired Macs. The checkmark identifies the active Mac.")
                     }
                     Text(model.pairedMacs.isEmpty
                          ? "Open RayBridge on your Mac and copy its pairing link, or scan its QR code with the iPhone Camera."
@@ -140,6 +147,10 @@ struct SetupView: View {
                          ? "RayBridge uses the glasses camera and glasses audio. An active session continues when this iPhone is locked or another app is open. If the glasses aren’t connected when you start, RayBridge offers to continue with this iPhone instead."
                          : "RayBridge uses this iPhone’s camera, speaker, and microphone. Glasses are not needed, and registration is not required. Point the back camera at what you want described. The session stops if this iPhone is locked or another app is opened because iOS pauses its camera in the background.")
                 }
+                Section("Build") {
+                    Text(Self.buildDescription)
+                    Text("Background operation requires Camera and audio to be set to Meta glasses before starting RayBridge.")
+                }
                 Section("Assistant") {
                     Picker("Assistant", selection: $model.assistantProvider) {
                         ForEach(AssistantProvider.allCases) { provider in
@@ -161,11 +172,11 @@ struct SetupView: View {
                 Section("Sound cues") {
                     Toggle("Listen for voice commands", isOn: $model.voiceCommandsEnabled)
                         .disabled(model.sessionActive)
-                        .accessibilityHint("Enables Start, Stop, Cancel, Mute, Unmute, and Commands voice commands while RayBridge is in the foreground.")
+                        .accessibilityHint("Enables Start, Stop, Cancel, Mute, Unmute, and Commands voice commands. Active glasses sessions continue in the background.")
                     Toggle("Listen for Start while stopped", isOn: $model.handsFreeStandbyEnabled)
                         .disabled(model.sessionActive || !model.voiceCommandsEnabled)
                         .accessibilityHint("Keeps the microphone ready for the Start and Commands commands while RayBridge is stopped and this app is open.")
-                    Text("Voice commands work only while this app is open. Start begins a session. Stop ends it. Cancel interrupts the current request or answer. Mute lets the current turn finish but listens only for Unmute and Commands. Say Commands to hear the available choices. Standby keeps the microphone active while stopped so Start remains hands-free.")
+                    Text("Start begins a session. Stop ends it. Cancel interrupts the current request or answer. Mute lets the current turn finish but listens only for Unmute and Commands. Say Commands to hear the available choices. Stopped-app standby works only while RayBridge is open; voice commands in an active Meta-glasses session continue while locked or in another app.")
                     Toggle("Play heartbeat while the assistant is thinking", isOn: $model.thinkingHeartbeatEnabled)
                         .disabled(model.sessionActive)
                         .accessibilityHint("When on, a soft repeating heartbeat plays after your question until the answer is ready.")
@@ -215,5 +226,12 @@ struct SetupView: View {
                 }
             }
         }
+    }
+
+    private static var buildDescription: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "Unknown"
+        let build = info?["CFBundleVersion"] as? String ?? "Unknown"
+        return "RayBridge \(version) (\(build))"
     }
 }
