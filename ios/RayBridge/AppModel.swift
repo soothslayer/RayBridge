@@ -614,6 +614,12 @@ final class AppModel: ObservableObject {
             present(CaptureSourcePolicy.warning(for: readiness), announce: true)
         }
     }
+    func startFromSystemRequest() {
+        RayBridgeDiagnostics.event("System Start RayBridge request received")
+        launchAnnouncementPending = false
+        speech.stop()
+        start()
+    }
     // Continues the session on the iPhone camera and speaker alone.
     func continueWithoutGlasses() {
         dismissGlassesWarning(resumeStandby: false)
