@@ -185,6 +185,8 @@ final class AppModel: ObservableObject {
     private var appIsActive = false
     private var launchAnnouncementPending = true
     private var startupStage = StartupStage.other
+    private var phoneCameraPausedForBackground = false
+    private var phoneCameraTransition: Task<Void, Never>?
 
     // Without glasses there is no Bluetooth route to wait for, so the iPhone
     // speaker and microphone carry the whole session. While stopped, the saved
@@ -224,6 +226,8 @@ final class AppModel: ObservableObject {
         },
         stopImmediately: { [unowned self] in
             activity += 1; busy = false; cameraRequested = false
+            phoneCameraPausedForBackground = false
+            phoneCameraTransition?.cancel(); phoneCameraTransition = nil
             muted = false
             endAnswerStream()
             commandConfirmationPending = false; pendingAnswerMessage = nil
@@ -504,22 +508,41 @@ final class AppModel: ObservableObject {
         switch CaptureSourcePolicy.backgroundAction(
             sessionActive: sessionActive,
             source: captureSource,
-            awaitingGlassesPermission: camera.awaitingPermission
+            awaitingGlassesPermission: camera.awaitingPermission,
+            phoneCameraSupportsBackground: phoneCamera.keepsCameraWhileBackgrounded
         ) {
         case .continueGlassesSession:
             // Meta's compressed camera stream and the active record/playback
             // audio session are both allowed to continue while locked.
             RayBridgeDiagnostics.event("Continuing glasses session in background")
+        case .continuePhoneCameraSession:
+            RayBridgeDiagnostics.event("Continuing iPhone camera session in background")
+        case .continuePhoneAudioSession:
+            RayBridgeDiagnostics.event("Continuing iPhone session without camera in background")
+            phoneCameraPausedForBackground = true
+            cameraRequested = false
+            cameraActive = false
+            frame = nil
+            cameraStatus = "iPhone camera paused. Listening without camera."
+            let current = activity
+            if connected {
+                Task {
+                    guard current == self.activity, self.connected else { return }
+                    try? await self.connection.send(["type": "camera.off"])
+                }
+            }
+            phoneCameraTransition?.cancel()
+            phoneCameraTransition = Task {
+                await phoneCamera.stop()
+                guard !Task.isCancelled else { return }
+                guard current == activity, sessionActive, captureSource == .phone,
+                      phoneCameraPausedForBackground else { return }
+                cameraStatus = "iPhone camera paused. Listening without camera."
+                if !busy, !speech.isSpeaking { status = "Listening without camera" }
+            }
         case .preservePermissionHandoff:
             // Opening Meta AI for camera permission is still part of startup.
             RayBridgeDiagnostics.event("Preserving Meta AI permission handoff in background")
-        case .stopPhoneSession:
-            let message = "The iPhone camera cannot keep capturing in the background. Choose Meta glasses in Setup to use RayBridge while this iPhone is locked or another app is open."
-            RayBridgeDiagnostics.event("Stopping iPhone camera session in background")
-            endAnswerStream()
-            commandConfirmationPending = false; pendingAnswerMessage = nil
-            stop()
-            error = message; status = message; pendingErrorAnnouncement = message
         case .stopStandbyListening:
             pendingErrorAnnouncement = nil
             commandConfirmationPending = false; pendingAnswerMessage = nil
@@ -531,11 +554,35 @@ final class AppModel: ObservableObject {
         // Keychain items protected with WhenUnlocked can be unavailable if iOS
         // created the model before the device was unlocked.
         refreshPairings()
+        if phoneCameraPausedForBackground, sessionActive, captureSource == .phone {
+            resumePhoneCameraAfterBackground()
+        }
         // Teardown stops audio last, so wait for idle before speaking an error
         // that was saved while the app was in the background.
         if let message = pendingErrorAnnouncement, !sessionActive { speakError(message) }
         else if launchAnnouncementPending, !sessionActive { announceLaunch() }
         else if !speech.isSpeaking { refreshStandbyListening() }
+    }
+
+    private func resumePhoneCameraAfterBackground() {
+        phoneCameraPausedForBackground = false
+        cameraRequested = true
+        cameraStatus = "Restarting iPhone camera…"
+        let current = activity
+        let pauseTask = phoneCameraTransition
+        phoneCameraTransition = Task {
+            await pauseTask?.value
+            guard !Task.isCancelled else { return }
+            do {
+                try await phoneCamera.start()
+                guard current == activity, sessionActive, captureSource == .phone else { return }
+                RayBridgeDiagnostics.event("iPhone camera resumed after background")
+            } catch {
+                guard current == activity, sessionActive, captureSource == .phone else { return }
+                stop()
+                fail("The iPhone camera could not resume. Start RayBridge again. \(error.localizedDescription)")
+            }
+        }
     }
     private func announceLaunch() {
         launchAnnouncementPending = false
@@ -608,6 +655,8 @@ final class AppModel: ObservableObject {
             showingSetup = true; fail("Open Setup and register your glasses with Meta AI first."); return
         }
         captureSource = source
+        phoneCameraPausedForBackground = false
+        phoneCameraTransition?.cancel(); phoneCameraTransition = nil
         cameraStatus = "Camera off"
         startupStage = .other
         if source == .glasses { RayBridgeDiagnostics.event("Start RayBridge requested with glasses") }
@@ -623,6 +672,8 @@ final class AppModel: ObservableObject {
     }
     func stop() {
         RayBridgeDiagnostics.event("Stop RayBridge requested")
+        phoneCameraPausedForBackground = false
+        phoneCameraTransition?.cancel(); phoneCameraTransition = nil
         session.stop()
     }
     private func refreshStandbyListening() {

@@ -70,8 +70,9 @@ enum StartDecision: Equatable {
 
 enum BackgroundSessionAction: Equatable {
     case continueGlassesSession
+    case continuePhoneCameraSession
+    case continuePhoneAudioSession
     case preservePermissionHandoff
-    case stopPhoneSession
     case stopStandbyListening
 }
 
@@ -115,11 +116,13 @@ enum CaptureSourcePolicy {
     static func backgroundAction(
         sessionActive: Bool,
         source: CaptureSource,
-        awaitingGlassesPermission: Bool
+        awaitingGlassesPermission: Bool,
+        phoneCameraSupportsBackground: Bool = false
     ) -> BackgroundSessionAction {
         if awaitingGlassesPermission { return .preservePermissionHandoff }
         guard sessionActive else { return .stopStandbyListening }
-        return source == .glasses ? .continueGlassesSession : .stopPhoneSession
+        if source == .glasses { return .continueGlassesSession }
+        return phoneCameraSupportsBackground ? .continuePhoneCameraSession : .continuePhoneAudioSession
     }
 
     private static func reason(_ readiness: GlassesReadiness) -> String {
