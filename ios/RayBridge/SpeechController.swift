@@ -127,14 +127,34 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         let session = AVAudioSession.sharedInstance()
         var options: AVAudioSession.CategoryOptions = [.allowBluetoothHFP]
         if allowPhoneAudio { options.insert(.defaultToSpeaker) }
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
-        try session.setActive(true)
+        do {
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
+        } catch {
+            RayBridgeDiagnostics.event("Audio startup failed while setting the audio session category")
+            throw error
+        }
+        do {
+            try session.setActive(true)
+        } catch {
+            RayBridgeDiagnostics.event("Audio startup failed while activating the audio session")
+            throw error
+        }
         if let glasses = session.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) {
-            try session.setPreferredInput(glasses)
+            do {
+                try session.setPreferredInput(glasses)
+            } catch {
+                RayBridgeDiagnostics.event("Audio startup failed while selecting the glasses microphone")
+                throw error
+            }
         } else if !allowPhoneAudio {
             throw BridgeError.message("Connect your glasses as a Bluetooth headset before listening.")
         } else {
-            try session.setPreferredInput(nil)
+            do {
+                try session.setPreferredInput(nil)
+            } catch {
+                RayBridgeDiagnostics.event("Audio startup failed while selecting the iPhone microphone")
+                throw error
+            }
         }
     }
     var hasBluetoothRoute: Bool {
@@ -148,6 +168,23 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         cancelCue()
         try startRecognition(commands: [])
     }
+    func startListeningRecoveringAudio() async throws {
+        do {
+            try startListening()
+        } catch {
+            guard (error as NSError).code == -50 else { throw error }
+            RayBridgeDiagnostics.event("Audio startup returned -50; resetting and retrying")
+            resetAudioForRetry()
+            try await Task.sleep(for: .milliseconds(200))
+            do {
+                try startListening()
+                RayBridgeDiagnostics.event("Audio startup retry succeeded")
+            } catch {
+                RayBridgeDiagnostics.event("Audio startup retry failed")
+                throw error
+            }
+        }
+    }
     func startCommandListening(for commands: Set<VoiceCommand>) throws {
         guard voiceCommandsEnabled, !commands.isEmpty else { return }
         commandFailures = 0
@@ -160,7 +197,12 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         // other audio ducking minimal so the answer remains audible.
         let input = engine.inputNode
         if input.isVoiceProcessingEnabled != voiceCommandsEnabled {
-            try input.setVoiceProcessingEnabled(voiceCommandsEnabled)
+            do {
+                try input.setVoiceProcessingEnabled(voiceCommandsEnabled)
+            } catch {
+                RayBridgeDiagnostics.event("Audio startup failed while configuring voice processing")
+                throw error
+            }
         }
         if voiceCommandsEnabled {
             input.voiceProcessingOtherAudioDuckingConfiguration = .init(
@@ -235,7 +277,11 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
             }
         }
         do { engine.prepare(); try engine.start() }
-        catch { stopListening(); throw error }
+        catch {
+            RayBridgeDiagnostics.event("Audio startup failed while starting the audio engine")
+            stopListening()
+            throw error
+        }
         limit = Task { [weak self] in
             try? await Task.sleep(for: .seconds(45))
             guard !Task.isCancelled, let self else { return }
@@ -292,6 +338,11 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         engine.stop()
         if tapped { engine.inputNode.removeTap(onBus: 0); tapped = false }
         request?.endAudio(); recognition?.cancel(); recognition = nil; request = nil
+    }
+    private func resetAudioForRetry() {
+        stopListening()
+        engine.reset()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
     func startListeningWithCue() throws {
         stopThinkingHeartbeat()

@@ -222,7 +222,7 @@ final class AppModel: ObservableObject {
             speech.allowPhoneAudio = usePhoneAudio
             speech.voiceCommandsEnabled = voiceCommandsEnabled
             speech.questionCommands = [.stop, .cancel, .mute, .status, .repeat, .commands]
-            try speech.startListening()
+            try await speech.startListeningRecoveringAudio()
         },
         stopImmediately: { [unowned self] in
             activity += 1; busy = false; cameraRequested = false
