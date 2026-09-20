@@ -137,8 +137,8 @@ struct SetupView: View {
                     .disabled(model.sessionActive)
                     .accessibilityHint("Selects whether RayBridge uses the glasses camera and glasses audio, or this iPhone’s camera and speaker.")
                     Text(model.preferredCaptureSource == .glasses
-                         ? "RayBridge uses the glasses camera and glasses audio. If the glasses aren’t connected when you start, it warns you and offers to continue with this iPhone instead."
-                         : "RayBridge uses this iPhone’s camera, speaker, and microphone. Glasses are not needed, and registration is not required. Point the back of the iPhone at what you want described.")
+                         ? "RayBridge uses the glasses camera and glasses audio. An active session continues when this iPhone is locked or another app is open. If the glasses aren’t connected when you start, RayBridge offers to continue with this iPhone instead."
+                         : "RayBridge uses this iPhone’s camera, speaker, and microphone. Glasses are not needed, and registration is not required. Point the back camera at what you want described. The session stops if this iPhone is locked or another app is opened because iOS pauses its camera in the background.")
                 }
                 Section("Assistant") {
                     Picker("Assistant", selection: $model.assistantProvider) {

@@ -365,7 +365,11 @@ final class AppModel: ObservableObject {
         RayBridgeDiagnostics.event("An error was presented in the app")
         error = message; status = message
         UIAccessibility.post(notification: .announcement, argument: message)
-        guard appIsActive, !UIAccessibility.isVoiceOverRunning else {
+        guard appIsActive else {
+            pendingErrorAnnouncement = message
+            return
+        }
+        guard !UIAccessibility.isVoiceOverRunning else {
             pendingErrorAnnouncement = nil
             return
         }
@@ -373,7 +377,11 @@ final class AppModel: ObservableObject {
         else { speakError(message) }
     }
     private func speakError(_ message: String) {
-        guard appIsActive, !UIAccessibility.isVoiceOverRunning else {
+        guard appIsActive else {
+            pendingErrorAnnouncement = message
+            return
+        }
+        guard !UIAccessibility.isVoiceOverRunning else {
             pendingErrorAnnouncement = nil
             return
         }
@@ -493,17 +501,36 @@ final class AppModel: ObservableObject {
     }
     func background() {
         appIsActive = false
-        pendingErrorAnnouncement = nil
-        endAnswerStream()
-        commandConfirmationPending = false; pendingAnswerMessage = nil
-        // The permission handoff is part of startup, not a request to stop it.
-        if camera.awaitingPermission { return }
-        if sessionActive { stop() }
-        else { speech.stop() }
+        switch CaptureSourcePolicy.backgroundAction(
+            sessionActive: sessionActive,
+            source: captureSource,
+            awaitingGlassesPermission: camera.awaitingPermission
+        ) {
+        case .continueGlassesSession:
+            // Meta's compressed camera stream and the active record/playback
+            // audio session are both allowed to continue while locked.
+            RayBridgeDiagnostics.event("Continuing glasses session in background")
+        case .preservePermissionHandoff:
+            // Opening Meta AI for camera permission is still part of startup.
+            RayBridgeDiagnostics.event("Preserving Meta AI permission handoff in background")
+        case .stopPhoneSession:
+            let message = "The iPhone camera cannot keep capturing in the background. Choose Meta glasses in Setup to use RayBridge while this iPhone is locked or another app is open."
+            RayBridgeDiagnostics.event("Stopping iPhone camera session in background")
+            endAnswerStream()
+            commandConfirmationPending = false; pendingAnswerMessage = nil
+            stop()
+            error = message; status = message; pendingErrorAnnouncement = message
+        case .stopStandbyListening:
+            pendingErrorAnnouncement = nil
+            commandConfirmationPending = false; pendingAnswerMessage = nil
+            speech.stop()
+        }
     }
     func foreground() {
         appIsActive = true
-        if let message = pendingErrorAnnouncement { speakError(message) }
+        // Teardown stops audio last, so wait for idle before speaking an error
+        // that was saved while the app was in the background.
+        if let message = pendingErrorAnnouncement, !sessionActive { speakError(message) }
         else if launchAnnouncementPending, !sessionActive { announceLaunch() }
         else if !speech.isSpeaking { refreshStandbyListening() }
     }

@@ -200,7 +200,9 @@ final class GlassesCamera: CameraSource {
             }
             try Task.checkCancellation()
             RayBridgeDiagnostics.event("Glasses device session started; opening camera stream")
-            guard let stream = try device.addStream(config: StreamSessionConfig(videoCodec: .raw, resolution: .medium, frameRate: 7)) else {
+            // Meta's raw stream pauses when iOS backgrounds the app. HEVC keeps
+            // producing frames while the phone is locked or another app is open.
+            guard let stream = try device.addStream(config: StreamSessionConfig(videoCodec: .hvc1, resolution: .medium, frameRate: 7)) else {
                 throw BridgeError.message("Could not open the glasses camera.")
             }
             self.stream = stream

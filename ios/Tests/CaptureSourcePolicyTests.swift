@@ -8,8 +8,9 @@ struct CaptureSourcePolicyTests {
         testRegistrationWarningOffersSetup()
         testPhonePreferenceSkipsTheWarning()
         testStartupFailureFallback()
+        testBackgroundActions()
         testSourceStrings()
-        print("Passed 6 capture source tests: ready glasses, every unready state, registration, iPhone preference, startup fallback, spoken strings.")
+        print("Passed 7 capture source tests: ready glasses, every unready state, registration, iPhone preference, startup fallback, background behavior, spoken strings.")
     }
 
     static func testGlassesStartWithoutAWarning() {
@@ -78,5 +79,20 @@ struct CaptureSourcePolicyTests {
         precondition(CaptureSource.phone.cameraReadyAnnouncement.contains("iPhone camera"))
         precondition(CaptureSource.glasses.cameraReadyAnnouncement.contains("Glasses camera"))
         precondition(CaptureSource(rawValue: "phone") == .phone, "The saved preference must survive a relaunch")
+    }
+
+    static func testBackgroundActions() {
+        precondition(CaptureSourcePolicy.backgroundAction(
+            sessionActive: true, source: .glasses, awaitingGlassesPermission: false
+        ) == .continueGlassesSession, "An active glasses session must survive backgrounding")
+        precondition(CaptureSourcePolicy.backgroundAction(
+            sessionActive: true, source: .phone, awaitingGlassesPermission: false
+        ) == .stopPhoneSession, "The built-in camera cannot capture in the background")
+        precondition(CaptureSourcePolicy.backgroundAction(
+            sessionActive: false, source: .glasses, awaitingGlassesPermission: false
+        ) == .stopStandbyListening, "Stopped-app standby must not keep the app alive")
+        precondition(CaptureSourcePolicy.backgroundAction(
+            sessionActive: true, source: .glasses, awaitingGlassesPermission: true
+        ) == .preservePermissionHandoff, "Opening Meta AI for permission must not cancel startup")
     }
 }
