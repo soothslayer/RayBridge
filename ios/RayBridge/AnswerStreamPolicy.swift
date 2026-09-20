@@ -13,8 +13,15 @@ enum AnswerSpeech: Equatable {
 enum AnswerStreamPolicy {
     static func speech(completed: String, alreadySpoken: String) -> AnswerSpeech {
         guard !alreadySpoken.isEmpty else { return .whole(completed) }
-        guard completed.hasPrefix(alreadySpoken) else { return .whole(completed) }
-        let remainder = String(completed.dropFirst(alreadySpoken.count))
+        // Streamed sentence boundaries include the following space or newline,
+        // while assistant adapters may trim the completed answer. Compare the
+        // exact prefix first, then tolerate only that trailing whitespace so a
+        // fully spoken answer is not repeated.
+        let prefix = completed.hasPrefix(alreadySpoken)
+            ? alreadySpoken
+            : alreadySpoken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prefix.isEmpty, completed.hasPrefix(prefix) else { return .whole(completed) }
+        let remainder = String(completed.dropFirst(prefix.count))
         return remainder.isEmpty ? .nothing : .remainder(remainder)
     }
 }

@@ -22,6 +22,18 @@ struct AnswerStreamPolicyTests {
                 == .nothing,
             "A fully spoken answer must not repeat")
 
+        // Claude trims its completed result, while the streamed sentence keeps
+        // the boundary whitespace. That formatting difference must not repeat
+        // an answer the user has already heard.
+        precondition(
+            AnswerStreamPolicy.speech(completed: "A red door.", alreadySpoken: "A red door. \n")
+                == .nothing,
+            "Trimmed final whitespace must not repeat a fully spoken answer")
+        precondition(
+            AnswerStreamPolicy.speech(completed: "A red door. It is closed.", alreadySpoken: "A red door. \n")
+                == .remainder(" It is closed."),
+            "Trimmed streamed whitespace must preserve the unspoken tail")
+
         // The assistant replaced what it was writing, so start again rather than
         // speaking a tail that does not follow what was heard.
         for spoken in ["Let me look. ", "A red door. It is open. ", "A blue"] {
