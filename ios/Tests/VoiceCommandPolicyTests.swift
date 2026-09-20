@@ -9,6 +9,8 @@ struct VoiceCommandPolicyTests {
             ("Cancel.", .cancel),
             ("MUTE", .mute),
             ("unmute", .unmute),
+            ("Status?", .status),
+            ("Repeat.", .repeat),
             ("Commands!", .commands)
         ]
         for (text, expected) in commands {
@@ -17,6 +19,7 @@ struct VoiceCommandPolicyTests {
 
         for text in [
             "", "please stop", "cancel that", "mute please", "unmute now", "show commands",
+            "task status", "repeat that",
             "nonstop", "stopping", "started", "muted", "stopwatch",
             "Where is the bus stop?", "How do I mute this?", "Start the timer"
         ] {

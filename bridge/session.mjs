@@ -1,4 +1,6 @@
 import { TurnTiming } from './timing.mjs';
+import { randomUUID } from 'node:crypto';
+import { ActionBroker } from './actions.mjs';
 
 export const MAX_FRAME_BYTES = 500_000;
 export const FRAME_MAX_AGE_MS = 3500;
@@ -26,10 +28,13 @@ export function validJPEG(value) {
 // One conversation per authenticated phone connection, one turn at a time.
 export class PhoneSession {
   constructor(assistant, send, { now = Date.now, turnTimeout = 90000, tts = null,
-    account = null, accountCacheMs = ACCOUNT_CACHE_MS, log } = {}) {
+    account = null, accountCacheMs = ACCOUNT_CACHE_MS, log, actionBroker = new ActionBroker({ now }) } = {}) {
     this.assistant = assistant; this.send = send; this.now = now; this.turnTimeout = turnTimeout; this.tts = tts;
     this.accountCacheMs = accountCacheMs;
     this.log = log;
+    this.sessionId = randomUUID();
+    this.connectionEpoch = 1;
+    this.actionBroker = actionBroker;
     // The connection handshake already proved the account. Re-reading it for
     // every question costs a CLI subprocess or an extra RPC before the model
     // can even start, so a signed-in result is reused for a short while.
@@ -111,6 +116,8 @@ export class PhoneSession {
         } finally { this.cancelling = false; }
         break;
       }
+      case 'status': await this.coordinatorControl('mac', 'task.status'); break;
+      case 'repeat': await this.coordinatorControl('phone', 'speech.repeat'); break;
       case 'reset': this.cancel(); this.threadId = null; this.frame = null; this.send({ type: 'ready' }); break;
       default: throw new Error('Unsupported phone message.');
     }
@@ -138,6 +145,7 @@ export class PhoneSession {
       clearTimeout(this.timer); this.active = null;
       this.timing?.mark('answerComplete');
       if (p.turn.status === 'completed' && text) {
+        this.lastAnswer = text;
         if (active.ttsEngine === 'kokoro' && this.tts) void this.kokoroAnswer(text, active.ttsVoice, this.generation);
         else { this.send({ type: 'answer', text }); this.timing?.report(); }
       }
@@ -148,6 +156,21 @@ export class PhoneSession {
         this.send({ type: 'error', message: p.turn.error?.message || 'The answer was interrupted or empty. Please try again.' });
       }
     }
+  }
+  async coordinatorControl(device, operation) {
+    const action = this.actionBroker.request(this.sessionId, this.connectionEpoch, device, operation);
+    const receipt = await this.actionBroker.execute(action, {
+      sessionId: this.sessionId, connectionEpoch: this.connectionEpoch, task: null
+    }, () => {
+      if (operation === 'task.status') {
+        if (this.cancelling) return 'Cancellation is still in progress.';
+        if (this.starting) return 'The task is starting.';
+        if (this.active) return 'The assistant is working on your question.';
+        return 'No task is running. RayBridge is listening.';
+      }
+      return this.lastAnswer || 'There is no completed answer to repeat yet.';
+    });
+    if (!this.closed) this.send({ type: 'coordinator.speech', text: receipt.result });
   }
   // Partial text is only useful to a phone that speaks it locally. Kokoro
   // generates one audio file on the Mac from the finished answer.
