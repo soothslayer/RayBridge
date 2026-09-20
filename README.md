@@ -36,6 +36,47 @@ npm start
 
 Open `http://127.0.0.1:8844` on that Mac. `scripts/start-mac.command` provides a double-click source launcher. To rebuild the native Mac wrapper, run `bash scripts/build-mac.sh`; this requires Xcode command-line tools and a native standalone Codex executable on PATH. The npm Codex launcher script is not accepted by the bundler.
 
+### If Codex turns fail with a model error
+
+Every local Codex turn failing with a message like
+
+```
+The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account.
+```
+
+means `~/.codex/config.toml` names a model your ChatGPT login cannot use. A ChatGPT
+subscription does not offer the `*-codex` model names, and the set it does offer changes
+over time, so a config that worked once can break later. This is not a RayBridge fault:
+`codex exec 'hi'` fails the same way, and `codex doctor` does not catch it — it reported
+`22 ok · 0 fail` while every turn was failing.
+
+List the models your own account actually offers:
+
+```sh
+{ printf '%s\n' \
+  '{"id":1,"method":"initialize","params":{"clientInfo":{"name":"x","title":"x","version":"0"}}}' \
+  '{"method":"initialized","params":{}}' \
+  '{"id":2,"method":"model/list","params":{}}'; sleep 8; } \
+  | codex app-server --listen stdio:// 2>/dev/null \
+  | python3 -c 'import sys,json
+for line in sys.stdin:
+    try: m = json.loads(line)
+    except: continue
+    if m.get("id") == 2:
+        for x in m["result"]["data"]:
+            print(x["id"], "(account default)" if x["isDefault"] else "")
+        break'
+```
+
+Then set the `model` at the top of `~/.codex/config.toml` to one of those ids — the one
+marked as the account default is the safe choice — and confirm it with
+`codex exec --skip-git-repo-check 'Reply with exactly: OK'`.
+
+`model_reasoning_effort` in the same file applies to RayBridge too, since local mode
+inherits this config. A short spoken question answered in about ten seconds at `xhigh` on
+this Mac, so a high effort is not automatically too slow, but it is the first setting to
+lower if answers take longer than you want to wait for speech.
+
 ## Install the iPhone app
 
 The checked-in Xcode project is `ios/RayBridge.xcodeproj`. It requires iOS 18+, current Xcode, and a physical iPhone for real speech and glasses testing. Meta DAT is pinned to **0.6.0** in both the project and Swift package resolution.
