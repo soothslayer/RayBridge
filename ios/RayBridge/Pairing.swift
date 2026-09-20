@@ -1,11 +1,14 @@
 import Foundation
 import Security
 
-struct Pairing: Codable {
+struct Pairing: Codable, Equatable, Identifiable {
     let host: String
     let port: Int
     let token: String
     let fingerprint: String
+
+    var id: String { "\(host.lowercased()):\(port)" }
+    var displayName: String { id }
 
     init(link: String) throws {
         guard let parts = URLComponents(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -27,25 +30,116 @@ struct Pairing: Codable {
     var url: URL { URL(string: "wss://\(host):\(port)/v1/connect")! }
 
     func save() throws {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "org.raybridge.pairing", kSecAttrAccount as String: "mac"]
-        let data = try JSONEncoder().encode(self)
-        SecItemDelete(query as CFDictionary)
-        var item = query
-        item[kSecValueData as String] = data
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else {
-            throw BridgeError.message("Could not save pairing in the iPhone Keychain.")
-        }
+        var history = Self.loadHistory()
+        history.remember(self)
+        try Self.saveHistory(history)
     }
+
     static func load() -> Pairing? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "org.raybridge.pairing", kSecAttrAccount as String: "mac",
-            kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        loadHistory().selected
+    }
+
+    static func recent() -> [Pairing] {
+        loadHistory().recent
+    }
+
+    static func select(id: String) throws {
+        var history = loadHistory()
+        guard history.select(id: id) else {
+            throw BridgeError.message("That saved Mac is no longer available. Pair it again.")
+        }
+        try saveHistory(history)
+    }
+
+    private static let service = "org.raybridge.pairing"
+    private static let historyAccount = "macs"
+    private static let legacyAccount = "mac"
+
+    private static func query(account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: account]
+    }
+
+    private static func data(account: String) -> Data? {
+        var query = query(account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
               let data = result as? Data else { return nil }
-        return try? JSONDecoder().decode(Pairing.self, from: data)
+        return data
+    }
+
+    private static func loadHistory() -> PairingHistory {
+        if let data = data(account: historyAccount),
+           let stored = try? JSONDecoder().decode(PairingHistory.self, from: data) {
+            return stored.normalized()
+        }
+        // Existing installs stored one pairing under the `mac` account. Make it
+        // immediately available, then persist the new format when Keychain is writable.
+        guard let data = data(account: legacyAccount),
+              let legacy = try? JSONDecoder().decode(Pairing.self, from: data) else {
+            return PairingHistory()
+        }
+        let migrated = PairingHistory(recent: [legacy], selectedID: legacy.id)
+        try? saveHistory(migrated)
+        return migrated
+    }
+
+    private static func saveHistory(_ history: PairingHistory) throws {
+        let data = try JSONEncoder().encode(history.normalized())
+        let itemQuery = query(account: historyAccount)
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+        var status = SecItemUpdate(itemQuery as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var item = itemQuery
+            attributes.forEach { item[$0.key] = $0.value }
+            status = SecItemAdd(item as CFDictionary, nil)
+        }
+        guard status == errSecSuccess else {
+            throw BridgeError.message("Could not save pairing in the iPhone Keychain.")
+        }
+        SecItemDelete(query(account: legacyAccount) as CFDictionary)
+    }
+}
+
+struct PairingHistory: Codable, Equatable {
+    static let limit = 5
+    var recent: [Pairing] = []
+    var selectedID: String?
+
+    var selected: Pairing? {
+        recent.first(where: { $0.id == selectedID }) ?? recent.first
+    }
+
+    mutating func remember(_ pairing: Pairing) {
+        recent.removeAll { $0.id == pairing.id }
+        recent.insert(pairing, at: 0)
+        recent = Array(recent.prefix(Self.limit))
+        selectedID = pairing.id
+    }
+
+    @discardableResult
+    mutating func select(id: String) -> Bool {
+        guard let index = recent.firstIndex(where: { $0.id == id }) else { return false }
+        let pairing = recent.remove(at: index)
+        recent.insert(pairing, at: 0)
+        selectedID = id
+        return true
+    }
+
+    func normalized() -> PairingHistory {
+        var unique: [Pairing] = []
+        for pairing in recent where !unique.contains(where: { $0.id == pairing.id }) {
+            unique.append(pairing)
+            if unique.count == Self.limit { break }
+        }
+        let selection = unique.contains(where: { $0.id == selectedID }) ? selectedID : unique.first?.id
+        return PairingHistory(recent: unique, selectedID: selection)
     }
 }
 

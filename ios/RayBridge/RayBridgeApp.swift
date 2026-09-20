@@ -101,11 +101,25 @@ struct SetupView: View {
                     if let error = model.error { Text(error).foregroundStyle(.red) }
                 }
                 Section("Your Mac") {
-                    if let host = model.pairedHost { Text("Paired Mac: \(host)") }
-                    Text("Open RayBridge on your Mac and copy its pairing link, or scan its QR code with the iPhone Camera.")
+                    if !model.pairedMacs.isEmpty {
+                        Picker("Active Mac", selection: Binding(
+                            get: { model.selectedPairingID },
+                            set: { model.selectPairedMac(id: $0) }
+                        )) {
+                            ForEach(model.pairedMacs) { pairing in
+                                Text(pairing.displayName).tag(pairing.id)
+                            }
+                        }
+                        .disabled(model.sessionActive)
+                        .accessibilityHint("Selects which saved Mac RayBridge connects to when it starts.")
+                        Text("RayBridge remembers the five most recently paired Macs. Selecting one makes it active for the next session.")
+                    }
+                    Text(model.pairedMacs.isEmpty
+                         ? "Open RayBridge on your Mac and copy its pairing link, or scan its QR code with the iPhone Camera."
+                         : "To add or refresh a Mac, copy its pairing link or scan its QR code with the iPhone Camera.")
                     SecureField("Paste pairing link", text: $model.pairingText)
                         .textContentType(.none).autocorrectionDisabled().textInputAutocapitalization(.never)
-                    Button("Pair Mac") { model.pair() }
+                    Button(model.pairedMacs.isEmpty ? "Pair Mac" : "Add Mac") { model.pair() }
                         .disabled(model.pairingText.isEmpty || model.sessionActive)
                 }
                 Section("Your glasses") {

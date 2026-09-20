@@ -167,7 +167,9 @@ final class AppModel: ObservableObject {
     // What this phone has actually spoken of an answer that is still arriving.
     private var spokenAnswerPrefix = ""
     private var answerStreamStopped = false
-    @Published var pairedHost: String? = Pairing.load()?.host
+    @Published private(set) var pairedMacs: [Pairing] = []
+    @Published private(set) var selectedPairingID = ""
+    @Published private(set) var pairedHost: String?
     private let connection = BridgeConnection()
     private let camera = GlassesCamera()
     private let phoneCamera = PhoneCamera()
@@ -238,6 +240,7 @@ final class AppModel: ObservableObject {
 
     init() {
         RayBridgeDiagnostics.event("App model initialization started")
+        refreshPairings()
         refreshSpeechVoices()
         connection.onMessage = { [weak self] in self?.receive($0) }
         connection.onError = { [weak self] message in
@@ -387,9 +390,24 @@ final class AppModel: ObservableObject {
         do {
             let pairing = try Pairing(link: pairingText)
             guard !sessionActive else { return }
-            try pairing.save(); pairedHost = pairing.host; pairingText = ""; error = nil
+            try pairing.save(); refreshPairings(); pairingText = ""; error = nil
             status = "Mac paired. Tap Start RayBridge to begin."
         } catch { fail(error.localizedDescription) }
+    }
+    func selectPairedMac(id: String) {
+        guard !sessionActive, id != selectedPairingID else { return }
+        do {
+            try Pairing.select(id: id)
+            refreshPairings()
+            error = nil
+            status = "Mac selected. Tap Start RayBridge to begin."
+        } catch { fail(error.localizedDescription) }
+    }
+    private func refreshPairings() {
+        pairedMacs = Pairing.recent()
+        let selected = Pairing.load()
+        selectedPairingID = selected?.id ?? ""
+        pairedHost = selected?.host
     }
     private func connectForSession() async throws {
         guard let pairing = Pairing.load() else {
