@@ -36,9 +36,13 @@ Phone messages:
 | `camera.off` | — | Drops latest frame |
 | `ask` | `text`: 1–4000 characters | Uses latest frame if at most 3.5 seconds old at request processing |
 | `cancel` | — | Interrupts current turn; does not delete conversation |
+| `status` | — | Returns a spoken summary of the current task state |
+| `repeat` | — | Returns the latest completed answer for replay |
 | `reset` | — | Interrupts current turn and starts fresh on next question |
 
-Bridge events: `ready`, `thinking` (`hasImage`), `answer.partial` (`text`), `answer.discard`, `answer` (`text`), `error` (`message`), `cancelled`.
+Bridge events: `ready`, `thinking` (`hasImage`), `answer.partial` (`text`), `answer.discard`, `answer` (`text`), `coordinator.speech` (`text`), `error` (`message`), `cancelled`.
+
+Status and repeat pass through a short-lived action broker scoped to the authenticated phone session and connection epoch. Replayed action identifiers are idempotent, changed or expired envelopes are rejected, and the phone cannot select an arbitrary assistant method.
 
 Claude Code and Hermes report the answer as it is written; Codex is unchanged and reports only the completed answer. `answer.partial` carries the next finished sentence of an answer the assistant is still writing, so the phone can start speaking before the turn completes. Each partial continues the one before it, and the completed `answer` always contains the whole text. The phone speaks only the part of that text it has not already spoken, and speaks the whole answer if the text no longer begins with what was spoken. `answer.discard` means the assistant replaced what it was writing: the phone stops mid-answer and waits. Partials are not sent when the Mac generates the answer audio with Kokoro, because that needs the finished text.
 

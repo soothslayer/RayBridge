@@ -53,6 +53,33 @@ test('only final assistant text in the current turn is spoken', async t => {
   codex.emit('notification', { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
   assert.deepEqual(output.at(-1), { type: 'answer', text: 'Hello there' });
 });
+test('Status reports idle, starting, and active work without changing the turn', async t => {
+  const { codex, session, output } = setup(); t.after(() => session.close());
+  await session.receive({ type: 'status' });
+  assert.equal(output.at(-1).text, 'No task is running. RayBridge is listening.');
+  let finishThread;
+  codex.newThread = () => new Promise(resolve => { finishThread = resolve; });
+  const asking = session.receive({ type: 'ask', text: 'Hello' });
+  await new Promise(resolve => setImmediate(resolve));
+  await session.receive({ type: 'status' });
+  assert.equal(output.at(-1).text, 'The task is starting.');
+  finishThread('thread-1'); await asking;
+  await session.receive({ type: 'status' });
+  assert.equal(output.at(-1).text, 'The assistant is working on your question.');
+  assert.equal(session.active.turnId, 'turn-1');
+});
+test('Repeat speaks the latest completed answer and handles an empty history', async t => {
+  const { codex, session, output } = setup(); t.after(() => session.close());
+  await session.receive({ type: 'repeat' });
+  assert.equal(output.at(-1).text, 'There is no completed answer to repeat yet.');
+  await session.receive({ type: 'ask', text: 'Hello' });
+  codex.emit('notification', { method: 'item/completed', params: {
+    threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', text: 'The saved answer.' } } });
+  codex.emit('notification', { method: 'turn/completed', params: {
+    threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+  await session.receive({ type: 'repeat' });
+  assert.deepEqual(output.at(-1), { type: 'coordinator.speech', text: 'The saved answer.' });
+});
 test('Kokoro audio is attached to the final answer', async t => {
   const tts = { synthesize: async (text, voice) => {
     assert.equal(text, 'A useful answer'); assert.equal(voice, 'bf_emma');

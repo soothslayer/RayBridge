@@ -172,11 +172,11 @@ struct SetupView: View {
                 Section("Sound cues") {
                     Toggle("Listen for voice commands", isOn: $model.voiceCommandsEnabled)
                         .disabled(model.sessionActive)
-                        .accessibilityHint("Enables Start, Stop, Cancel, Mute, Unmute, and Commands voice commands. Active glasses sessions continue in the background.")
+                        .accessibilityHint("Enables Start, Stop, Cancel, Status, Repeat, Mute, Unmute, and Commands voice commands. Active glasses sessions continue in the background.")
                     Toggle("Listen for Start while stopped", isOn: $model.handsFreeStandbyEnabled)
                         .disabled(model.sessionActive || !model.voiceCommandsEnabled)
                         .accessibilityHint("Keeps the microphone ready for the Start and Commands commands while RayBridge is stopped and this app is open.")
-                    Text("Start begins a session. Stop ends it. Cancel interrupts the current request or answer. Mute lets the current turn finish but listens only for Unmute and Commands. Say Commands to hear the available choices. Stopped-app standby works only while RayBridge is open; voice commands in an active Meta-glasses session continue while locked or in another app.")
+                    Text("Start begins a session. Stop ends it. Cancel interrupts the current request or answer. Status reports whether a task is running. Repeat speaks the latest completed answer again. Mute lets the current turn finish but listens only for Unmute and Commands. Say Commands to hear the available choices. Stopped-app standby works only while RayBridge is open; voice commands in an active Meta-glasses session continue while locked or in another app.")
                     Toggle("Play heartbeat while the assistant is thinking", isOn: $model.thinkingHeartbeatEnabled)
                         .disabled(model.sessionActive)
                         .accessibilityHint("When on, a soft repeating heartbeat plays after your question until the answer is ready.")

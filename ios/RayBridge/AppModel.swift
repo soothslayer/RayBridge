@@ -202,7 +202,7 @@ final class AppModel: ObservableObject {
     }
 
     private var activeResponseCommands: Set<VoiceCommand> {
-        voiceCommandsEnabled ? [.stop, .cancel, .mute, .commands] : []
+        voiceCommandsEnabled ? [.stop, .cancel, .mute, .status, .repeat, .commands] : []
     }
     private var currentResponseCommands: Set<VoiceCommand> {
         muted ? [.unmute, .commands] : activeResponseCommands
@@ -221,7 +221,7 @@ final class AppModel: ObservableObject {
             }
             speech.allowPhoneAudio = usePhoneAudio
             speech.voiceCommandsEnabled = voiceCommandsEnabled
-            speech.questionCommands = [.stop, .cancel, .mute, .commands]
+            speech.questionCommands = [.stop, .cancel, .mute, .status, .repeat, .commands]
             try speech.startListening()
         },
         stopImmediately: { [unowned self] in
@@ -737,8 +737,22 @@ final class AppModel: ObservableObject {
             muteVoiceInput()
         case .unmute:
             unmuteVoiceInput()
+        case .status:
+            requestCoordinatorControl("status")
+        case .repeat:
+            requestCoordinatorControl("repeat")
         case .commands:
             announceVoiceCommands()
+        }
+    }
+    private func requestCoordinatorControl(_ type: String) {
+        guard running, connected else { return }
+        Task {
+            do { try await connection.send(["type": type]) }
+            catch {
+                guard running else { return }
+                stop(); fail(error.localizedDescription)
+            }
         }
     }
     private func announceVoiceCommands() {
@@ -995,6 +1009,21 @@ final class AppModel: ObservableObject {
         case "cancelled":
             guard running, cancellationPending else { return }
             cancellationPending = false; cancellationToken = nil; cancellationTimeout?.cancel()
+        case "coordinator.speech":
+            guard running, let text = message["text"] as? String, !text.isEmpty else { return }
+            let previousStatus = status
+            confirmVoiceCommand(text, preservingCurrentOutput: busy || speech.isSpeaking) { [weak self] in
+                guard let self, self.running else { return }
+                if self.muted {
+                    self.listenForUnmute()
+                } else if self.busy || self.speech.isSpeaking {
+                    do { try self.speech.startCommandListening(for: self.currentResponseCommands) }
+                    catch { self.stop(); self.fail(error.localizedDescription); return }
+                    self.status = previousStatus
+                } else {
+                    self.resumeListening()
+                }
+            }
         case "error":
             // An old turn can fail while the cancellation is in flight.
             // The timeout reconnects if the Mac cannot acknowledge cancellation.

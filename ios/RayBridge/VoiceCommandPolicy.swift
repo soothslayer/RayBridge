@@ -6,6 +6,8 @@ enum VoiceCommand: String, CaseIterable, Hashable {
     case cancel
     case mute
     case unmute
+    case status
+    case `repeat`
     case commands
 }
 
@@ -16,7 +18,7 @@ enum VoiceCommandPolicy {
         "RayBridge is stopped. Tap Start RayBridge, or say Start to begin. For a list of voice commands, say Commands."
 
     static let helpAnnouncement =
-        "You can say Start when RayBridge is stopped. While RayBridge is running, say Stop to end it, Cancel to cancel the current question or answer, or Mute to ignore voice input. When muted, say Unmute to resume. Say Commands to hear this list again."
+        "You can say Start when RayBridge is stopped. While RayBridge is running, say Stop to end it, Cancel to cancel the current question or answer, Status to hear the current task status, Repeat to hear the latest completed answer again, or Mute to ignore voice input. When muted, say Unmute to resume. Say Commands to hear this list again."
 
     private static func words(_ text: String) -> [String] {
         text.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
