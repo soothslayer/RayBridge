@@ -1,7 +1,24 @@
 import AppKit
+import Carbon
 import WebKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate,
+                         WKScriptMessageHandlerWithReply {
+    private struct AutomationApp {
+        let name: String
+        let bundleIdentifier: String
+    }
+    private let commonAutomationApps = [
+        AutomationApp(name: "Finder", bundleIdentifier: "com.apple.finder"),
+        AutomationApp(name: "Safari", bundleIdentifier: "com.apple.Safari"),
+        AutomationApp(name: "Mail", bundleIdentifier: "com.apple.mail"),
+        AutomationApp(name: "Messages", bundleIdentifier: "com.apple.MobileSMS"),
+        AutomationApp(name: "Calendar", bundleIdentifier: "com.apple.iCal"),
+        AutomationApp(name: "Notes", bundleIdentifier: "com.apple.Notes"),
+        AutomationApp(name: "Reminders", bundleIdentifier: "com.apple.reminders"),
+        AutomationApp(name: "Contacts", bundleIdentifier: "com.apple.AddressBook"),
+        AutomationApp(name: "Music", bundleIdentifier: "com.apple.Music")
+    ]
     private var window: NSWindow!
     private var web: WKWebView!
     private var process: Process?
@@ -18,7 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 850),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "RayBridge"; window.center(); window.minSize = NSSize(width: 640, height: 600)
-        web = WKWebView(); web.navigationDelegate = self; web.uiDelegate = self
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "raybridge")
+        web = WKWebView(frame: .zero, configuration: configuration)
+        web.navigationDelegate = self; web.uiDelegate = self
         window.contentView = web; window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         web.loadHTMLString("<html><body style='font:22px -apple-system;padding:60px;color:#245e51'><h1>RayBridge</h1><p>Starting your Mac bridge…</p></body></html>", baseURL: nil)
         guard let resources = Bundle.main.resourceURL else { return }
@@ -56,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     func applicationWillTerminate(_ notification: Notification) {
         quitting = true; logPipe?.fileHandleForReading.readabilityHandler = nil
+        web.configuration.userContentController.removeScriptMessageHandler(forName: "raybridge", contentWorld: .page)
         if process?.isRunning == true { process?.terminate() }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -70,6 +91,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url, url.scheme == "https" { NSWorkspace.shared.open(url) }
         return nil
+    }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage,
+                               replyHandler: @escaping (Any?, String?) -> Void) {
+        guard message.frameInfo.securityOrigin.host == "127.0.0.1",
+              let request = message.body as? [String: Any], let type = request["type"] as? String else {
+            replyHandler(nil, "RayBridge rejected an untrusted app-access request.")
+            return
+        }
+        switch type {
+        case "prepareAppAccess":
+            replyHandler(["results": prepareAppAccess()], nil)
+        case "openAutomationSettings":
+            guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"),
+                  NSWorkspace.shared.open(url) else {
+                replyHandler(nil, "Could not open Automation settings.")
+                return
+            }
+            replyHandler(["opened": true], nil)
+        default:
+            replyHandler(nil, "RayBridge does not support that Mac request.")
+        }
+    }
+    private func prepareAppAccess() -> [[String: String]] {
+        commonAutomationApps.map { app in
+            guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.bundleIdentifier) != nil else {
+                return ["name": app.name, "status": "unavailable"]
+            }
+            let target = NSAppleEventDescriptor(bundleIdentifier: app.bundleIdentifier)
+            let status = AEDeterminePermissionToAutomateTarget(
+                target.aeDesc, typeWildCard, typeWildCard, true)
+            if status == noErr { return ["name": app.name, "status": "allowed"] }
+            if status == errAEEventNotPermitted { return ["name": app.name, "status": "notAllowed"] }
+            return ["name": app.name, "status": "unavailable"]
+        }
     }
 }
 

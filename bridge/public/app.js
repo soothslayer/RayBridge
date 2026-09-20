@@ -139,6 +139,24 @@ action('saveApps', async () => {
   for (const app of applications) app.selected = selected.has(app.id);
   renderApplications();
 });
+action('prepareApps', async () => {
+  const bridge = window.webkit?.messageHandlers?.raybridge;
+  if (!bridge) throw new Error('Open this setup page in the RayBridge Mac app to prepare app access.');
+  $('prepareStatus').textContent = 'Follow each macOS permission prompt. RayBridge will continue after every choice.';
+  const { results } = await bridge.postMessage({ type: 'prepareAppAccess' });
+  const allowed = results.filter(result => result.status === 'allowed').map(result => result.name);
+  const notAllowed = results.filter(result => result.status === 'notAllowed').map(result => result.name);
+  const unavailable = results.filter(result => result.status === 'unavailable').map(result => result.name);
+  const parts = [allowed.length ? `Allowed: ${allowed.join(', ')}.` : 'No apps were allowed.'];
+  if (notAllowed.length) parts.push(`Not allowed: ${notAllowed.join(', ')}.`);
+  if (unavailable.length) parts.push(`Unavailable: ${unavailable.join(', ')}.`);
+  $('prepareStatus').textContent = parts.join(' ');
+});
+action('openAutomation', async () => {
+  const bridge = window.webkit?.messageHandlers?.raybridge;
+  if (!bridge) throw new Error('Open this setup page in the RayBridge Mac app to review Automation settings.');
+  await bridge.postMessage({ type: 'openAutomationSettings' });
+});
 $('appSearch').oninput = renderApplications;
 $('allowAllApps').onchange = () => {
   for (const app of applications) app.selected = $('allowAllApps').checked;
