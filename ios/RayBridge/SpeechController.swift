@@ -34,7 +34,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
     private var generation = 0
     private var transcript = ""
     private var spokenUtterance: AVSpeechUtterance?
-    private var confirmationUtterance: AVSpeechUtterance?
+    private var confirmationUtterances: [AVSpeechUtterance] = []
     private var confirmationCompletion: (() -> Void)?
     private var resumeSpeechAfterConfirmation = false
     private var resumeAudioAfterConfirmation = false
@@ -304,6 +304,18 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         preservingCurrentOutput: Bool,
         completion: @escaping () -> Void
     ) throws {
+        try speakCommandConfirmation(
+            [text],
+            pauseBetweenPhrases: 0,
+            preservingCurrentOutput: preservingCurrentOutput,
+            completion: completion)
+    }
+    func speakCommandConfirmation(
+        _ phrases: [String],
+        pauseBetweenPhrases: TimeInterval,
+        preservingCurrentOutput: Bool,
+        completion: @escaping () -> Void
+    ) throws {
         cancelConfirmation()
         cancelCue()
         stopListening()
@@ -331,13 +343,22 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
             stopThinkingHeartbeat()
         }
 
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = voiceIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:))
+        let voice = voiceIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:))
             ?? AVSpeechSynthesisVoice(language: "en-US")
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-        confirmationUtterance = utterance
+        let utterances = phrases.enumerated().map { index, phrase in
+            let utterance = AVSpeechUtterance(string: phrase)
+            utterance.voice = voice
+            utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+            if index < phrases.count - 1 { utterance.postUtteranceDelay = pauseBetweenPhrases }
+            return utterance
+        }
+        guard !utterances.isEmpty else {
+            completion()
+            return
+        }
+        confirmationUtterances = utterances
         confirmationCompletion = completion
-        confirmationSynthesizer.speak(utterance)
+        utterances.forEach(confirmationSynthesizer.speak)
     }
     func startThinkingHeartbeat() throws {
         stopThinkingHeartbeat()
@@ -487,7 +508,7 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         cuePlayer = nil
     }
     private func cancelConfirmation() {
-        confirmationUtterance = nil
+        confirmationUtterances.removeAll()
         confirmationCompletion = nil
         resumeSpeechAfterConfirmation = false
         resumeAudioAfterConfirmation = false
@@ -495,8 +516,9 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlay
         confirmationSynthesizer.stopSpeaking(at: .immediate)
     }
     private func finishConfirmation(_ utterance: AVSpeechUtterance) {
-        guard confirmationUtterance === utterance else { return }
-        confirmationUtterance = nil
+        guard let index = confirmationUtterances.firstIndex(where: { $0 === utterance }) else { return }
+        confirmationUtterances.remove(at: index)
+        guard confirmationUtterances.isEmpty else { return }
         let completion = confirmationCompletion
         confirmationCompletion = nil
         let resumeSpeech = resumeSpeechAfterConfirmation

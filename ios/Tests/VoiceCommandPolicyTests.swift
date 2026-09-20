@@ -27,6 +27,8 @@ struct VoiceCommandPolicyTests {
         }
         precondition(VoiceCommandPolicy.launchAnnouncement.contains("Tap Start RayBridge"))
         precondition(VoiceCommandPolicy.launchAnnouncement.contains("say Start"))
+        precondition(VoiceCommandPolicy.helpAnnouncementPhrases.count == VoiceCommand.allCases.count,
+                     "Help should give every command its own paused phrase")
         for command in VoiceCommand.allCases {
             precondition(VoiceCommandPolicy.helpAnnouncement.localizedCaseInsensitiveContains(command.rawValue),
                          "Help must announce the \(command.rawValue) command")
