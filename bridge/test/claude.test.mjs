@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { ClaudeClient, localClaudeCandidates } from '../claude.mjs';
+import { ClaudeClient, claudePermissionMode, localClaudeCandidates } from '../claude.mjs';
 
 class FakeChild extends EventEmitter {
   stdin = new PassThrough();
@@ -59,6 +59,10 @@ test('one Claude process answers every question in a conversation', async t => {
     ['--print', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json']);
   assert.ok(launches[0].args.includes('--session-id'));
   assert.ok(launches[0].args.includes('--include-partial-messages'));
+  // Anything short of bypassPermissions leaves tools needing an approval that a
+  // blind user on glasses has no way to give, so the request is denied silently.
+  assert.deepEqual(launches[0].args.slice(6, 10),
+    ['--permission-mode', 'bypassPermissions', '--permission-prompts', 'none']);
   // The question travels as a message, never as a command-line argument.
   assert.equal(launches[0].args.some(argument => argument.includes('What is this?')), false);
   assert.deepEqual(written(launches[0].child)[0].message.content, [{ type: 'text', text: 'What is this?\nNo current camera image is available.' }]);
@@ -216,4 +220,9 @@ test('Claude runtime candidates prefer the configured executable and standard us
   const candidates = localClaudeCandidates('/bundled/claude', { HOME: '/Users/someone' });
   assert.equal(candidates[0], '/Users/someone/.local/bin/claude');
   assert.ok(candidates.includes('/bundled/claude'));
+});
+
+test('the permission mode is unrestricted by default and can be narrowed by environment', () => {
+  assert.equal(claudePermissionMode({}), 'bypassPermissions');
+  assert.equal(claudePermissionMode({ RAYBRIDGE_CLAUDE_PERMISSION_MODE: 'acceptEdits' }), 'acceptEdits');
 });
