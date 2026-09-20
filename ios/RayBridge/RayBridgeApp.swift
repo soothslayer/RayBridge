@@ -6,12 +6,14 @@ struct RayBridgeApp: App {
     @Environment(\.scenePhase) private var scenePhase
     init() {
         RayBridgeDiagnostics.event("App entry point reached")
+        RayBridgeShortcuts.updateAppShortcutParameters()
     }
     var body: some Scene {
         WindowGroup {
             ContentView(model: model)
                 .onAppear {
                     RayBridgeDiagnostics.event("Main screen appeared")
+                    RayBridgeIntentCoordinator.shared.attach(model)
                     model.foreground()
                 }
                 .onOpenURL { model.handle($0) }
@@ -43,7 +45,7 @@ struct ContentView: View {
                         .accessibilityHint(model.sessionActive ? "Stops the camera, microphone, speech, and Mac connection." : "Connects to your Mac and the glasses camera, or offers this iPhone when the glasses aren’t connected, then starts listening for your question.")
                     if let error = model.error { Text(error).foregroundStyle(.red).accessibilityLabel("Error: \(error)") }
                     Text(model.cameraStatus).accessibilityLabel("Camera status: \(model.cameraStatus)")
-                    Text("Tap Start RayBridge, wait for the camera confirmation, then ask your question. Stop RayBridge ends the entire session. If your glasses aren’t connected, RayBridge offers to continue with this iPhone’s camera and speaker.").font(.body)
+                    Text("Tap Start RayBridge or ask Siri to start RayBridge, wait for the camera confirmation, then ask your question. Stop RayBridge ends the entire session. If your glasses aren’t connected, RayBridge offers to continue with this iPhone’s camera and speaker.").font(.body)
                     GroupBox("Conversation") {
                         VStack(alignment: .leading, spacing: 12) {
                             if !model.transcript.isEmpty { Text("You: \(model.transcript)") }

@@ -22,6 +22,7 @@
 		8FD5466DB3D5A680064B1949 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = 430893438731BD07D7895E7E /* MWDATCore */; };
 		B176C516C2DCFADF2760D37F /* GlassesCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = A682C67C95C85EF1F2CF880A /* GlassesCamera.swift */; };
 		CB5356CB1B67442BD400F176 /* SpeechController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 416AB305A59A692B92AFD3D8 /* SpeechController.swift */; };
+		9A00CE05E5089CC5F6539501 /* SiriIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A00CE05E5089CC5F6539502 /* SiriIntents.swift */; };
 		ECB401710364878149DADF44 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = 44B05B90D40F69CB87123015 /* MWDATCamera */; };
 /* End PBXBuildFile section */
 
@@ -39,6 +40,7 @@
 		416AB305A59A692B92AFD3D8 /* SpeechController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechController.swift; sourceTree = "<group>"; };
 		607F3F3DD11823BC3C65DB43 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
 		955DB17DA6A3D4AD29CAC310 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		9A00CE05E5089CC5F6539502 /* SiriIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiriIntents.swift; sourceTree = "<group>"; };
 		A682C67C95C85EF1F2CF880A /* GlassesCamera.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassesCamera.swift; sourceTree = "<group>"; };
 		CCCE0BA4F21D643889470A59 /* RayBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RayBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D8D45434725B53F14F44853E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -84,6 +86,7 @@
 				607F3F3DD11823BC3C65DB43 /* Pairing.swift */,
 				0C5EE867F5E3F8654E9009D1 /* RayBridgeApp.swift */,
 				416AB305A59A692B92AFD3D8 /* SpeechController.swift */,
+				9A00CE05E5089CC5F6539502 /* SiriIntents.swift */,
 				1A55FA0190C34781943A7312 /* SessionController.swift */,
 				2B66AB01A1C45881B21F5102 /* CameraImagePolicy.swift */,
 				2B66AB01A1C45881B21F5112 /* AnswerStreamPolicy.swift */,
@@ -177,6 +180,7 @@
 				804BB218B99B03719A2AA945 /* Pairing.swift in Sources */,
 				23F6D9EFBB273E66A6FB6672 /* RayBridgeApp.swift in Sources */,
 				CB5356CB1B67442BD400F176 /* SpeechController.swift in Sources */,
+				9A00CE05E5089CC5F6539501 /* SiriIntents.swift in Sources */,
 				1A55FA0190C34781943A7311 /* SessionController.swift in Sources */,
 				2B66AB01A1C45881B21F5101 /* CameraImagePolicy.swift in Sources */,
 				2B66AB01A1C45881B21F5111 /* AnswerStreamPolicy.swift in Sources */,
@@ -196,7 +200,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = KUGPEZH97N;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RayBridge/Info.plist;
@@ -275,7 +279,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = KUGPEZH97N;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RayBridge/Info.plist;
