@@ -181,6 +181,7 @@ final class AppModel: ObservableObject {
     private var commandConfirmationPending = false
     private var pendingAnswerMessage: [String: Any]?
     private var appIsActive = false
+    private var launchAnnouncementPending = true
     private var startupStage = StartupStage.other
 
     // Without glasses there is no Bluetooth route to wait for, so the iPhone
@@ -193,14 +194,14 @@ final class AppModel: ObservableObject {
     }
     private var activeCamera: any CameraSource { captureSource == .phone ? phoneCamera : camera }
     private var standbyCommands: Set<VoiceCommand> {
-        glassesWarning == nil ? [.start] : [.start, .cancel]
+        glassesWarning == nil ? [.start, .commands] : [.start, .cancel, .commands]
     }
 
     private var activeResponseCommands: Set<VoiceCommand> {
-        voiceCommandsEnabled ? [.stop, .cancel, .mute] : []
+        voiceCommandsEnabled ? [.stop, .cancel, .mute, .commands] : []
     }
     private var currentResponseCommands: Set<VoiceCommand> {
-        muted ? [.unmute] : activeResponseCommands
+        muted ? [.unmute, .commands] : activeResponseCommands
     }
 
     private lazy var session = SessionController(
@@ -216,7 +217,7 @@ final class AppModel: ObservableObject {
             }
             speech.allowPhoneAudio = usePhoneAudio
             speech.voiceCommandsEnabled = voiceCommandsEnabled
-            speech.questionCommands = [.stop, .cancel, .mute]
+            speech.questionCommands = [.stop, .cancel, .mute, .commands]
             try speech.startListening()
         },
         stopImmediately: { [unowned self] in
@@ -485,7 +486,23 @@ final class AppModel: ObservableObject {
     func foreground() {
         appIsActive = true
         if let message = pendingErrorAnnouncement { speakError(message) }
-        else { refreshStandbyListening() }
+        else if launchAnnouncementPending, !sessionActive { announceLaunch() }
+        else if !speech.isSpeaking { refreshStandbyListening() }
+    }
+    private func announceLaunch() {
+        launchAnnouncementPending = false
+        let message = voiceCommandsEnabled && handsFreeStandbyEnabled
+            ? VoiceCommandPolicy.launchAnnouncement
+            : "RayBridge is stopped. Tap Start RayBridge to begin."
+        UIAccessibility.post(notification: .announcement, argument: message)
+        guard !UIAccessibility.isVoiceOverRunning else {
+            refreshStandbyListening()
+            return
+        }
+        // The startup guidance must be audible before a glasses route exists.
+        speech.allowPhoneAudio = true
+        do { try speech.speak(message) }
+        catch { refreshStandbyListening() }
     }
     func start() {
         guard !sessionActive else { return }
@@ -568,7 +585,9 @@ final class AppModel: ObservableObject {
             if error == nil { status = idleStatus }
             return
         }
-        speech.allowPhoneAudio = usePhoneAudio
+        // Start and Commands must work before glasses are connected. The audio
+        // session still prefers a Bluetooth headset when one is available.
+        speech.allowPhoneAudio = true
         do {
             try speech.startCommandListening(for: standbyCommands)
             if error == nil { status = standbyStatus }
@@ -583,8 +602,8 @@ final class AppModel: ObservableObject {
         glassesWarning?.message ?? "Stopped. Tap Start RayBridge to begin."
     }
     private var standbyStatus: String {
-        guard glassesWarning == nil else { return "Glasses aren’t connected. Say Start to continue without glasses, or say Cancel." }
-        return "Stopped. Say Start or tap Start RayBridge."
+        guard glassesWarning == nil else { return "Glasses aren’t connected. Say Start to continue without glasses, Cancel to dismiss, or Commands for help." }
+        return "Stopped. Say Start, say Commands for help, or tap Start RayBridge."
     }
     private func handleVoiceCommand(_ command: VoiceCommand) {
         switch command {
@@ -619,6 +638,29 @@ final class AppModel: ObservableObject {
             muteVoiceInput()
         case .unmute:
             unmuteVoiceInput()
+        case .commands:
+            announceVoiceCommands()
+        }
+    }
+    private func announceVoiceCommands() {
+        let previousStatus = status
+        let preservingOutput = running && (busy || speech.isSpeaking)
+        confirmVoiceCommand(
+            VoiceCommandPolicy.helpAnnouncement,
+            preservingCurrentOutput: preservingOutput
+        ) { [weak self] in
+            guard let self else { return }
+            if !self.running {
+                self.refreshStandbyListening()
+            } else if self.muted {
+                self.listenForUnmute()
+            } else if self.busy || self.speech.isSpeaking {
+                do { try self.speech.startCommandListening(for: self.currentResponseCommands) }
+                catch { self.stop(); self.fail(error.localizedDescription); return }
+                self.status = previousStatus
+            } else {
+                self.resumeListening()
+            }
         }
     }
     private func confirmVoiceCommand(
@@ -627,7 +669,7 @@ final class AppModel: ObservableObject {
         completion: @escaping () -> Void
     ) {
         commandConfirmationPending = true
-        speech.allowPhoneAudio = usePhoneAudio
+        speech.allowPhoneAudio = sessionActive ? usePhoneAudio : true
         let finish = { [weak self] in
             guard let self else { return }
             self.commandConfirmationPending = false
@@ -675,7 +717,7 @@ final class AppModel: ObservableObject {
     }
     private func listenForUnmute() {
         guard running, connected, muted else { return }
-        do { try speech.startCommandListening(for: [.unmute]) }
+        do { try speech.startCommandListening(for: currentResponseCommands) }
         catch { stop(); fail(error.localizedDescription); return }
         if busy { status = "Muted while Codex is thinking. Say Unmute." }
         else if speech.isSpeaking { status = "Muted while the answer is speaking. Say Unmute." }
