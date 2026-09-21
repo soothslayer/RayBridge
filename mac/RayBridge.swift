@@ -101,7 +101,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         switch type {
         case "prepareAppAccess":
-            replyHandler(["results": prepareAppAccess()], nil)
+            prepareAppAccess { results in
+                replyHandler(["results": results], nil)
+            }
         case "openAutomationSettings":
             guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"),
                   NSWorkspace.shared.open(url) else {
@@ -113,18 +115,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             replyHandler(nil, "RayBridge does not support that Mac request.")
         }
     }
-    private func prepareAppAccess() -> [[String: String]] {
-        commonAutomationApps.map { app in
-            guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.bundleIdentifier) != nil else {
-                return ["name": app.name, "status": "unavailable"]
+    private func prepareAppAccess(completion: @escaping ([[String: String]]) -> Void) {
+        var results: [[String: String]] = []
+        func requestNext(_ index: Int) {
+            guard index < commonAutomationApps.count else {
+                completion(results)
+                return
             }
-            let target = NSAppleEventDescriptor(bundleIdentifier: app.bundleIdentifier)
-            let status = AEDeterminePermissionToAutomateTarget(
-                target.aeDesc, typeWildCard, typeWildCard, true)
-            if status == noErr { return ["name": app.name, "status": "allowed"] }
-            if status == errAEEventNotPermitted { return ["name": app.name, "status": "notAllowed"] }
-            return ["name": app.name, "status": "unavailable"]
+            let app = commonAutomationApps[index]
+            guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.bundleIdentifier) else {
+                results.append(["name": app.name, "status": "unavailable"])
+                requestNext(index + 1)
+                return
+            }
+            let requestPermission = { (launchedByRayBridge: NSRunningApplication?) in
+                let target = NSAppleEventDescriptor(bundleIdentifier: app.bundleIdentifier)
+                let status = AEDeterminePermissionToAutomateTarget(
+                    target.aeDesc, typeWildCard, typeWildCard, true)
+                if status == noErr {
+                    results.append(["name": app.name, "status": "allowed"])
+                } else if status == errAEEventNotPermitted {
+                    results.append(["name": app.name, "status": "notAllowed"])
+                } else {
+                    results.append(["name": app.name, "status": "unavailable"])
+                }
+                launchedByRayBridge?.terminate()
+                requestNext(index + 1)
+            }
+            if !NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleIdentifier).isEmpty {
+                requestPermission(nil)
+                return
+            }
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = false
+            configuration.addsToRecentItems = false
+            NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { launched, error in
+                DispatchQueue.main.async {
+                    guard error == nil, let launched else {
+                        results.append(["name": app.name, "status": "unavailable"])
+                        requestNext(index + 1)
+                        return
+                    }
+                    requestPermission(launched)
+                }
+            }
         }
+        requestNext(0)
     }
 }
 
