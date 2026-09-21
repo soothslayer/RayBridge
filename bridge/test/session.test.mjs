@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { PhoneSession, splitSpokenChunk, validJPEG } from '../session.mjs';
+import { PhoneSession, splitSpokenChunk, spokenProgress, validJPEG } from '../session.mjs';
 
 class FakeCodex extends EventEmitter {
   calls = []; signedIn = true; accountReads = 0;
@@ -26,7 +26,8 @@ test('fresh frame accompanies a question; frames alone do not invoke the model',
   const { codex, session, output } = setup(); t.after(() => session.close());
   await session.receive({ type: 'frame', jpeg }); assert.equal(codex.calls.length, 0);
   await session.receive({ type: 'ask', text: 'What is in front of me?' });
-  assert.equal(codex.calls[1][3], jpeg); assert.equal(output[0].hasImage, true);
+  assert.equal(codex.calls[1][3], jpeg);
+  assert.equal(output.find(event => event.type === 'thinking').hasImage, true);
   await assert.rejects(session.receive({ type: 'ask', text: 'second' }), /already/);
 });
 test('stale frames and camera-off are never reused', async t => {
@@ -67,6 +68,49 @@ test('Status reports idle, starting, and active work without changing the turn',
   await session.receive({ type: 'status' });
   assert.equal(output.at(-1).text, 'The assistant is working on your question.');
   assert.equal(session.active.turnId, 'turn-1');
+});
+test('long tasks stay active and speak acknowledgements and useful progress', async t => {
+  let tick, cancelledTimers = 0;
+  const { codex, session, output } = setup({
+    progressInterval: 30000,
+    scheduleProgress: (callback, delay) => {
+      assert.equal(delay, 30000);
+      tick = callback;
+      return { unref() {} };
+    },
+    cancelProgress: () => { cancelledTimers += 1; }
+  });
+  t.after(() => session.close());
+  await session.receive({ type: 'ask', text: 'Do a long task' });
+  assert.deepEqual(output.find(event => event.type === 'coordinator.speech'), {
+    type: 'coordinator.speech', text: 'Got it. I’ll start now and keep you updated.'
+  });
+  codex.emit('notification', { method: 'item/completed', params: {
+    threadId: 'thread-1', turnId: 'turn-1',
+    item: { type: 'agentMessage', phase: 'commentary', text: '**Checked the files.** I am running the focused tests now.' }
+  } });
+  tick();
+  assert.deepEqual(output.at(-1), {
+    type: 'coordinator.speech', text: 'Checked the files. I am running the focused tests now.'
+  });
+  assert.equal(codex.calls.some(call => call[0] === 'turn/interrupt'), false);
+  tick();
+  assert.deepEqual(output.at(-1), { type: 'coordinator.speech', text: 'I’m still working on your request.' });
+  codex.emit('notification', { method: 'item/completed', params: {
+    threadId: 'thread-1', turnId: 'turn-1',
+    item: { type: 'agentMessage', phase: 'final_answer', text: 'The long task is complete.' }
+  } });
+  codex.emit('notification', { method: 'turn/completed', params: {
+    threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' }
+  } });
+  assert.deepEqual(output.at(-1), { type: 'answer', text: 'The long task is complete.' });
+  assert.equal(output.some(event => event.message === 'The answer took too long. Please try again.'), false);
+  assert.equal(cancelledTimers, 1);
+});
+test('spoken progress is plain and bounded for voice playback', () => {
+  assert.equal(spokenProgress('[Checked](https://example.com) **three files**. Next step.'),
+    'Checked three files. Next step.');
+  assert.ok(spokenProgress('a'.repeat(400)).length <= 240);
 });
 test('Repeat speaks the latest completed answer and handles an empty history', async t => {
   const { codex, session, output } = setup(); t.after(() => session.close());
