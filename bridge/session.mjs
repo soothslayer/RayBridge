@@ -5,6 +5,7 @@ import { ActionBroker } from './actions.mjs';
 export const MAX_FRAME_BYTES = 500_000;
 export const FRAME_MAX_AGE_MS = 3500;
 export const ACCOUNT_CACHE_MS = 300_000;
+export const PROGRESS_UPDATE_MS = 30_000;
 // A partial answer is released only at a sentence ending so the phone speaks
 // whole sentences while the rest of the answer is still being written.
 const SENTENCE_END = /[.!?\u2026]["'\u201d\u2019)\]]*\s|\n+/g;
@@ -25,11 +26,23 @@ export function validJPEG(value) {
     bytes.at(-2) === 255 && bytes.at(-1) === 217;
 }
 
+export function spokenProgress(value) {
+  if (typeof value !== 'string') return '';
+  const plain = value.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[`*_#]+/g, '').replace(/\s+/g, ' ').trim();
+  if (plain.length <= 240) return plain;
+  const shortened = plain.slice(0, 240);
+  const boundary = Math.max(shortened.lastIndexOf('. '), shortened.lastIndexOf('! '), shortened.lastIndexOf('? '));
+  return (boundary >= 40 ? shortened.slice(0, boundary + 1) : `${shortened.slice(0, 237).trimEnd()}…`).trim();
+}
+
 // One conversation per authenticated phone connection, one turn at a time.
 export class PhoneSession {
-  constructor(assistant, send, { now = Date.now, turnTimeout = 90000, tts = null,
+  constructor(assistant, send, { now = Date.now, progressInterval = PROGRESS_UPDATE_MS,
+    scheduleProgress = setTimeout, cancelProgress = clearTimeout, tts = null,
     account = null, accountCacheMs = ACCOUNT_CACHE_MS, log, actionBroker = new ActionBroker({ now }) } = {}) {
-    this.assistant = assistant; this.send = send; this.now = now; this.turnTimeout = turnTimeout; this.tts = tts;
+    this.assistant = assistant; this.send = send; this.now = now; this.tts = tts;
+    this.progressInterval = progressInterval; this.scheduleProgress = scheduleProgress; this.cancelProgress = cancelProgress;
     this.accountCacheMs = accountCacheMs;
     this.log = log;
     this.sessionId = randomUUID();
@@ -72,6 +85,7 @@ export class PhoneSession {
           ...(this.log ? { log: this.log } : {}) });
         this.starting = new Promise(resolve => { finishStarting = resolve; });
         const generation = this.generation = (this.generation || 0) + 1;
+        this.beginProgressUpdates();
         try {
           await this.signedInAccount();
           timing.mark('account');
@@ -85,7 +99,6 @@ export class PhoneSession {
             ttsEngine: message.ttsEngine === 'kokoro' ? 'kokoro' : 'apple',
             ttsVoice: typeof message.ttsVoice === 'string' ? message.ttsVoice : 'af_heart' };
           this.send({ type: 'thinking', hasImage: !!frame });
-          this.timer = setTimeout(() => { this.cancel(); this.send({ type: 'error', message: 'The answer took too long. Please try again.' }); }, this.turnTimeout);
           const result = await this.assistant.ask(threadId, message.text.trim(), frame);
           timing.mark('requestAccepted');
           if (this.closed || generation !== this.generation) {
@@ -98,7 +111,7 @@ export class PhoneSession {
         } catch (error) {
           // A failure from a cancelled request must not stop the next question.
           if (!this.closed && generation === this.generation) {
-            clearTimeout(this.timer); this.active = null; throw error;
+            this.stopProgressUpdates(); this.active = null; throw error;
           }
         } finally { this.starting = null; finishStarting(); }
         break;
@@ -127,6 +140,8 @@ export class PhoneSession {
     if (this.cancelledTurns.has(p.turnId || p.turn?.id)) return;
     if (method === 'turn/started') this.active.turnId = p.turn.id;
     if (p.turnId && this.active.turnId && p.turnId !== this.active.turnId) return;
+    if (method === 'item/completed' && p.item?.type === 'agentMessage' && p.item.phase === 'commentary')
+      this.queueProgressUpdate(p.item.text);
     if (method === 'item/completed' && p.item?.type === 'agentMessage' && p.item.phase !== 'commentary')
       this.active.text = p.item.text;
     // A growing answer is spoken sentence by sentence instead of waiting for the
@@ -142,7 +157,7 @@ export class PhoneSession {
       if (this.active.turnId && p.turn.id !== this.active.turnId) return;
       const active = this.active;
       const text = active.text;
-      clearTimeout(this.timer); this.active = null;
+      this.stopProgressUpdates(); this.active = null;
       this.timing?.mark('answerComplete');
       if (p.turn.status === 'completed' && text) {
         this.lastAnswer = text;
@@ -165,7 +180,7 @@ export class PhoneSession {
       if (operation === 'task.status') {
         if (this.cancelling) return 'Cancellation is still in progress.';
         if (this.starting) return 'The task is starting.';
-        if (this.active) return 'The assistant is working on your question.';
+        if (this.active) return this.pendingProgress || this.meaningfulProgress || 'The assistant is working on your question.';
         return 'No task is running. RayBridge is listening.';
       }
       return this.lastAnswer || 'There is no completed answer to repeat yet.';
@@ -194,6 +209,34 @@ export class PhoneSession {
     if (active.discards > 2) active.streaming = false;
     this.send({ type: 'answer.discard' });
   }
+  beginProgressUpdates() {
+    this.stopProgressUpdates();
+    this.latestProgress = 'Got it. I’ll start now and keep you updated.';
+    this.pendingProgress = null; this.meaningfulProgress = null;
+    this.send({ type: 'coordinator.speech', text: this.latestProgress });
+    this.scheduleNextProgressUpdate();
+  }
+  queueProgressUpdate(text) {
+    const update = spokenProgress(text);
+    if (update && update !== this.latestProgress) this.pendingProgress = update;
+  }
+  scheduleNextProgressUpdate() {
+    if (!(this.progressInterval > 0)) return;
+    this.progressTimer = this.scheduleProgress(() => {
+      this.progressTimer = null;
+      if (this.closed || (!this.starting && !this.active)) return;
+      if (this.pendingProgress) this.meaningfulProgress = this.pendingProgress;
+      this.latestProgress = this.pendingProgress || 'I’m still working on your request.';
+      this.pendingProgress = null;
+      this.send({ type: 'coordinator.speech', text: this.latestProgress });
+      this.scheduleNextProgressUpdate();
+    }, this.progressInterval);
+    this.progressTimer?.unref?.();
+  }
+  stopProgressUpdates() {
+    if (this.progressTimer != null) this.cancelProgress(this.progressTimer);
+    this.progressTimer = null; this.pendingProgress = null; this.latestProgress = null; this.meaningfulProgress = null;
+  }
   async kokoroAnswer(text, voice, generation) {
     try {
       const audio = await this.tts.synthesize(text, voice);
@@ -209,7 +252,7 @@ export class PhoneSession {
   }
   cancel() {
     this.generation = (this.generation || 0) + 1;
-    clearTimeout(this.timer);
+    this.stopProgressUpdates();
     this.cancelError = null;
     this.interruption = null;
     if (this.active?.turnId) {

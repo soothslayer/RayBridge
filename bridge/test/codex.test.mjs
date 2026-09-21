@@ -43,6 +43,9 @@ test('local turns use the selected workspace and allow chosen Computer Use apps'
   assert.equal(calls[0][1].cwd, '/Users/test');
   assert.equal(calls[0][1].sandbox, 'workspace-write');
   assert.match(calls[0][1].developerInstructions, /memories, local files, tools, plugins, and computer use/);
+  assert.match(calls[0][1].developerInstructions, /voice interface/);
+  assert.match(calls[0][1].developerInstructions, /Immediately acknowledge each request/);
+  assert.match(calls[0][1].developerInstructions, /commentary update is spoken aloud/);
   assert.equal(await readFile(`${computerUseHome}/computer-use/sessions/thread-1.toml`, 'utf8'),
     '[apps]\nallowed = ["com.apple.calculator"]\n');
   assert.deepEqual(calls[1][1].sandboxPolicy, {
