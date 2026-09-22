@@ -436,7 +436,7 @@ final class AppModel: ObservableObject {
             try Task.checkCancellation()
             if let connectionFailure { throw BridgeError.message(connectionFailure) }
             guard ContinuousClock.now < deadline else {
-                throw BridgeError.message("The Mac did not answer. Check that RayBridge is open on your Mac and both devices are on the same Wi-Fi network or tailnet.")
+                throw BridgeError.message("The Mac did not answer. Check that RayBridge is open on your Mac, the Mac is awake, and both devices are on the same Wi-Fi network or tailnet. Then say start to try again.")
             }
             try await Task.sleep(for: .milliseconds(100))
         }
@@ -1089,9 +1089,13 @@ final class AppModel: ObservableObject {
             // The timeout reconnects if the Mac cannot acknowledge cancellation.
             if cancellationPending { return }
             let text = message["message"] as? String ?? "The Mac reported an error."
-            if sessionPhase == .connecting { connectionFailure = text; return }
+            // The bridge attaches what to do about it; speak both together.
+            let spoken: String
+            if let fix = message["fix"] as? String, !fix.isEmpty { spoken = "\(text) \(fix)" }
+            else { spoken = text }
+            if sessionPhase == .connecting { connectionFailure = spoken; return }
             guard sessionActive, sessionPhase != .stopping else { return }
-            stop(); fail(text)
+            stop(); fail(spoken)
         default: break
         }
     }

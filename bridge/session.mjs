@@ -1,6 +1,7 @@
 import { TurnTiming } from './timing.mjs';
 import { randomUUID } from 'node:crypto';
 import { ActionBroker } from './actions.mjs';
+import { codedError, errorEvent, signOutFix } from './errors.mjs';
 
 export const MAX_FRAME_BYTES = 500_000;
 export const FRAME_MAX_AGE_MS = 3500;
@@ -62,7 +63,9 @@ export class PhoneSession {
     const account = await this.assistant.account();
     if (!account.signedIn) {
       this.cachedAccount = null;
-      throw new Error(account.signInMessage || 'Sign in to the selected assistant on the Mac first.');
+      throw codedError('assistant.signed-out',
+        account.signInMessage || 'Sign in to the selected assistant on the Mac first.',
+        signOutFix(this.assistant.provider));
     }
     this.cachedAccount = { account, at: this.now() };
     return account;
@@ -71,15 +74,15 @@ export class PhoneSession {
     if (this.closed) return;
     switch (message.type) {
       case 'frame':
-        if (!validJPEG(message.jpeg)) throw new Error('Camera frame is invalid or too large.');
+        if (!validJPEG(message.jpeg)) throw codedError('frame.invalid');
         if (this.frame && this.now() - this.frame.at < 750) return;
         this.frame = { jpeg: message.jpeg, at: this.now() };
         break;
       case 'camera.off': this.frame = null; break;
       case 'ask': {
-        if (this.active || this.starting || this.cancelling) throw new Error('An answer is already in progress.');
+        if (this.active || this.starting || this.cancelling) throw codedError('turn.busy');
         if (typeof message.text !== 'string' || !message.text.trim() || message.text.length > 4000)
-          throw new Error('Please ask a question of 1 to 4000 characters.');
+          throw codedError('question.invalid');
         let finishStarting;
         const timing = this.timing = new TurnTiming({ now: this.now,
           ...(this.log ? { log: this.log } : {}) });
@@ -132,7 +135,7 @@ export class PhoneSession {
       case 'status': await this.coordinatorControl('mac', 'task.status'); break;
       case 'repeat': await this.coordinatorControl('phone', 'speech.repeat'); break;
       case 'reset': this.cancel(); this.threadId = null; this.frame = null; this.send({ type: 'ready' }); break;
-      default: throw new Error('Unsupported phone message.');
+      default: throw codedError('message.invalid');
     }
   }
   notification({ method, params: p }) {
@@ -168,7 +171,8 @@ export class PhoneSession {
         // A failed turn can mean the assistant was signed out since the handshake.
         this.cachedAccount = null;
         this.timing?.report();
-        this.send({ type: 'error', message: p.turn.error?.message || 'The answer was interrupted or empty. Please try again.' });
+        const detail = p.turn.error?.message;
+        this.send(detail ? errorEvent('turn.failed', { message: detail }) : errorEvent('turn.failed'));
       }
     }
   }

@@ -48,7 +48,7 @@ final class BridgeConnection {
         timeout = Task { [weak self] in
             try? await Task.sleep(for: .seconds(15))
             guard !Task.isCancelled, let self, !self.ready else { return }
-            self.disconnect(); self.onError?("The Mac did not answer. Check Wi-Fi, pairing, and the Mac bridge.")
+            self.disconnect(); self.onError?(BridgeConnection.macUnreachable)
         }
         receiver = Task { [weak self] in
             do {
@@ -66,7 +66,7 @@ final class BridgeConnection {
             } catch {
                 guard !Task.isCancelled else { return }
                 self?.disconnect()
-                self?.onError?("Connection to the Mac was lost. Reconnect to continue.")
+                self?.onError?(BridgeConnection.spokenFailure(from: error))
             }
         }
     }
@@ -78,5 +78,35 @@ final class BridgeConnection {
     func disconnect() {
         ready = false; timeout?.cancel(); receiver?.cancel(); socket?.cancel(with: .goingAway, reason: nil)
         session?.invalidateAndCancel(); session = nil; socket = nil
+    }
+
+    // Every connection failure is spoken aloud, so each message says what
+    // happened and what to do about it. "Say start" works because the phone
+    // keeps listening for the start command while stopped.
+    static let macUnreachable =
+        "Your Mac didn't answer. Make sure RayBridge is open on your Mac, the Mac is awake, " +
+        "and both devices are on the same Wi-Fi network or tailnet. Then say start to try again."
+
+    static func spokenFailure(from error: Error) -> String {
+        let retry = "Then say start to try again."
+        guard let urlError = error as? URLError else {
+            return "The connection to your Mac was lost. \(retry)"
+        }
+        switch urlError.code {
+        case .notConnectedToInternet:
+            return "Your iPhone isn't on Wi-Fi. Check your Wi-Fi connection. \(retry)"
+        case .cannotFindHost:
+            return "Can't find your Mac on the network. Its address may have changed. Open Setup and pair your Mac again."
+        case .cannotConnectToHost, .timedOut:
+            return "Can't reach your Mac. Make sure RayBridge is open on your Mac, the Mac is awake, " +
+                "and both devices are on the same Wi-Fi network or tailnet. \(retry)"
+        case .networkConnectionLost:
+            return "The connection to your Mac dropped. \(retry)"
+        case .userCancelledAuthentication:
+            // The certificate pin rejected this Mac, so the delegate cancelled the challenge.
+            return "Your Mac didn't pass its security check. Open Setup and pair your Mac again to trust it."
+        default:
+            return "The connection to your Mac was lost. \(retry)"
+        }
     }
 }
