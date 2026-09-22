@@ -15,6 +15,7 @@ import { HermesClient } from './hermes.mjs';
 import { AssistantRouter, assistantProviders } from './assistant.mjs';
 import { PhoneSession } from './session.mjs';
 import { KokoroService } from './tts.mjs';
+import { errorEvent, signOutFix } from './errors.mjs';
 
 export function authorized(header, token) {
   const actual = Buffer.from(typeof header === 'string' ? header : '');
@@ -198,7 +199,7 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
         (requestedProvider === 'claude' ? 'Sign in to Claude Code on the Mac first.' : requestedProvider === 'hermes'
           ? 'Install and configure Hermes on the Mac first.' : 'Sign in with ChatGPT on the Mac first.'));
     } catch (error) {
-      send({ type: 'error', message: error.message });
+      send(errorEvent('assistant.signed-out', { message: error.message, fix: signOutFix(requestedProvider) }));
       const closeTimer = setTimeout(() => {
         if (ws.readyState !== WebSocket.CLOSED) ws.close(1011, 'Assistant unavailable');
       }, 1000);
@@ -218,7 +219,7 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
         const message = JSON.parse(data.toString());
         if (!message || typeof message !== 'object') throw new Error('Invalid message.');
         await session.receive(message);
-      } catch (error) { send({ type: 'error', message: error.message }); }
+      } catch (error) { send(errorEvent(error.code || 'message.invalid', { message: error.message, fix: error.fix })); }
     });
     ws.on('close', () => { session.close(); phones.delete(ws); });
     send({ type: 'ready', provider: requestedProvider });

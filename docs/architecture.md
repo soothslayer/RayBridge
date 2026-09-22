@@ -40,7 +40,9 @@ Phone messages:
 | `repeat` | — | Returns the latest completed answer for replay |
 | `reset` | — | Interrupts current turn and starts fresh on next question |
 
-Bridge events: `ready`, `thinking` (`hasImage`), `answer.partial` (`text`), `answer.discard`, `answer` (`text`), `coordinator.speech` (`text`), `error` (`message`), `cancelled`.
+Bridge events: `ready`, `thinking` (`hasImage`), `answer.partial` (`text`), `answer.discard`, `answer` (`text`), `coordinator.speech` (`text`), `error` (`code`, `message`, `fix`), `cancelled`.
+
+Every `error` event carries what happened (`message`) and what to do about it (`fix`); the phone speaks both together. `code` is a stable identifier from the catalog in `bridge/errors.mjs` (for example `assistant.signed-out`, `turn.failed`, `turn.busy`). The fix for a missing sign-in depends on the selected assistant, because each one is authorized differently on the Mac.
 
 Status and repeat pass through a short-lived action broker scoped to the authenticated phone session and connection epoch. Replayed action identifiers are idempotent, changed or expired envelopes are rejected, and the phone cannot select an arbitrary assistant method.
 
