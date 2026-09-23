@@ -38,7 +38,7 @@ final class BridgeConnection {
         config.waitsForConnectivity = false
         let session = URLSession(configuration: config, delegate: CertificatePin(fingerprint: pairing.fingerprint), delegateQueue: nil)
         self.session = session
-        var request = URLRequest(url: pairing.url)
+        var request = URLRequest(url: pairing.connectionURL())
         request.setValue("Bearer \(pairing.token)", forHTTPHeaderField: "Authorization")
         request.setValue(assistant, forHTTPHeaderField: "X-RayBridge-Assistant")
         let socket = session.webSocketTask(with: request)

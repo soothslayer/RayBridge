@@ -115,6 +115,7 @@ final class AppModel: ObservableObject {
     @Published var answer = ""
     @Published var error: String?
     @Published var pairingText = ""
+    @Published var workingFolder = ""
     @Published var typedQuestion = ""
     @Published var phoneAudio = false {
         didSet { refreshStandbyListening() }
@@ -418,11 +419,24 @@ final class AppModel: ObservableObject {
             status = "Mac selected. Tap Start RayBridge to begin."
         } catch { fail(error.localizedDescription) }
     }
+    func saveWorkingFolder() {
+        guard !sessionActive, !selectedPairingID.isEmpty else { return }
+        do {
+            workingFolder = try Pairing.setWorkspace(workingFolder, for: selectedPairingID) ?? ""
+            refreshPairings()
+            error = nil
+            status = workingFolder.isEmpty
+                ? "Using the working folder configured on the selected Mac."
+                : "Working folder saved for the selected Mac."
+            UIAccessibility.post(notification: .announcement, argument: status)
+        } catch { fail(error.localizedDescription) }
+    }
     private func refreshPairings() {
         pairedMacs = Pairing.recent()
         let selected = Pairing.load()
         selectedPairingID = selected?.id ?? ""
         pairedHost = selected?.host
+        workingFolder = selected?.workspace ?? ""
     }
     private func connectForSession() async throws {
         guard let pairing = Pairing.load() else {

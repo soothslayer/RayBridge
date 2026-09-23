@@ -162,6 +162,13 @@ struct SetupView: View {
                     .disabled(model.sessionActive)
                     .accessibilityHint("Selects which signed-in assistant on your paired Mac answers your questions.")
                     Text("The assistants run through their command-line tools on your Mac. Configure each one there first, then you can switch here before starting RayBridge.")
+                    TextField("Optional Mac working folder", text: $model.workingFolder)
+                        .textContentType(.none).autocorrectionDisabled().textInputAutocapitalization(.never)
+                        .disabled(model.sessionActive || model.selectedPairingID.isEmpty)
+                        .accessibilityHint("Enter an absolute folder path on the selected Mac, or leave it blank to use the folder configured on that Mac.")
+                    Button("Save working folder") { model.saveWorkingFolder() }
+                        .disabled(model.sessionActive || model.selectedPairingID.isEmpty)
+                    Text("This setting is saved separately for each paired Mac. Leave it blank to keep using that Mac’s current RayBridge working folder. The folder must already exist on the Mac. Changing it starts a new assistant conversation the next time RayBridge connects.")
                 }
                 Section("Camera images") {
                     Toggle("Send camera image with every question", isOn: $model.alwaysSendCameraImage)

@@ -161,9 +161,18 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
     sendJSON(res, authorized(req.headers.authorization, token) ? 404 : 401, { error: 'Use the paired iPhone app.' });
   });
   phone.on('upgrade', (req, socket, head) => {
-    if (req.url !== '/v1/connect' || req.headers.origin || !authorized(req.headers.authorization, token)) {
+    let connectionURL;
+    try { connectionURL = new URL(req.url, 'https://raybridge.local'); } catch {}
+    if (connectionURL?.pathname !== '/v1/connect' || req.headers.origin || !authorized(req.headers.authorization, token)) {
       socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return;
     }
+    const requestedWorkspaces = connectionURL.searchParams.getAll('workspace');
+    if (requestedWorkspaces.length > 1 ||
+        (requestedWorkspaces[0] !== undefined &&
+         (!requestedWorkspaces[0].trim() || requestedWorkspaces[0].length > 1024 || /[\u0000-\u001f\u007f]/.test(requestedWorkspaces[0])))) {
+      socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); return;
+    }
+    req.raybridgeWorkspace = requestedWorkspaces[0] ?? null;
     const requestedProvider = req.headers['x-raybridge-assistant'];
     if ((requestedProvider !== undefined &&
         (typeof requestedProvider !== 'string' || !assistantProviders.has(requestedProvider))) ||
@@ -182,6 +191,22 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
     serviceError = null; loginPending = false;
     return assistant.account();
   };
+  const selectWorkspace = async (requested, persist) => {
+    const selectedProvider = assistant.provider || provider;
+    if (selectedProvider === 'codex' && (assistant.accountSource || accountSource) !== 'local')
+      throw new Error('Choose this Mac’s Codex login before changing its working folder.');
+    const resolved = await resolveWorkspace(requested);
+    if (typeof assistant.setWorkspace !== 'function') throw new Error('This assistant cannot change its working folder.');
+    serviceError = null;
+    try {
+      if (assistant.workspace !== resolved) await assistant.setWorkspace(resolved);
+    } catch (error) { serviceError = error.message; throw error; }
+    if (persist) {
+      workspace = resolved;
+      await writeFile(workspacePath, `${resolved}\n`, { mode: 0o600 });
+    }
+    return resolved;
+  };
   wss.on('connection', async (ws, req) => {
     const send = value => { if (ws.readyState === WebSocket.OPEN) {
       if (ws.bufferedAmount > 1_000_000) ws.close(1013, 'Connection too slow');
@@ -194,6 +219,14 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
     let account;
     try {
       account = await selectProvider(requestedProvider);
+      if (req.raybridgeWorkspace !== null) {
+        await selectWorkspace(req.raybridgeWorkspace, false);
+        account = await assistant.account();
+      } else if ((assistant.provider !== 'codex' || (assistant.accountSource || accountSource) === 'local') &&
+                 assistant.workspace !== workspace) {
+        await selectWorkspace(workspace, false);
+        account = await assistant.account();
+      }
       if (!account.signedIn) throw new Error(account.signInMessage ||
         (requestedProvider === 'claude' ? 'Sign in to Claude Code on the Mac first.' : requestedProvider === 'hermes'
           ? 'Install and configure Hermes on the Mac first.' : 'Sign in with ChatGPT on the Mac first.'));
@@ -318,18 +351,9 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
         return sendJSON(res, 200, { ...account, accountSource: source });
       }
       if (req.method === 'POST' && req.url === '/api/workspace') {
-        const selectedProvider = assistant.provider || provider;
-        if (selectedProvider === 'codex' && (assistant.accountSource || accountSource) !== 'local')
-          throw new Error('Choose this Mac’s Codex login before changing its working folder.');
         const request = await readJSON(req, 5000);
-        const resolved = await resolveWorkspace(request.path);
-        if (typeof assistant.setWorkspace !== 'function') throw new Error('This assistant cannot change its working folder.');
         for (const ws of wss.clients) ws.close(1000, 'Assistant working folder changed');
-        serviceError = null;
-        try { await assistant.setWorkspace(resolved); }
-        catch (error) { serviceError = error.message; throw error; }
-        workspace = resolved;
-        await writeFile(workspacePath, `${resolved}\n`, { mode: 0o600 });
+        const resolved = await selectWorkspace(request.path, true);
         return sendJSON(res, 200, { ok: true, workspace: resolved });
       }
       if (req.method === 'POST' && req.url === '/api/apps') {
