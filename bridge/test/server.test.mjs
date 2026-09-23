@@ -4,6 +4,7 @@ import { EventEmitter, once } from 'node:events';
 import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { X509Certificate } from 'node:crypto';
 import http from 'node:http';
+import https from 'node:https';
 import { WebSocket } from 'ws';
 import { startBridge, authorized, magicDNSName } from '../server.mjs';
 
@@ -39,6 +40,19 @@ class SignedOutClaude extends FakeClaude {
 class FakeHermes extends FakeCodex {
   accountSource = undefined;
   async account() { return { signedIn: true, plan: 'local' }; }
+}
+
+function phoneJSON(url, token) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { rejectUnauthorized: false,
+      headers: token ? { Authorization: `Bearer ${token}` } : {} }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => resolve({ status: response.statusCode,
+        body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+    });
+    request.on('error', reject);
+  });
 }
 
 test('pairing tokens require an exact bearer match', () => {
@@ -82,6 +96,33 @@ test('HTTPS bridge authenticates, isolates admin, and completes a phone question
   assert.equal((await fetch(`${admin}/api/revoke`, { method: 'POST', headers: { 'X-RayBridge': 'local' } })).status, 200);
   await closed;
   assert.notEqual((await readFile(`${dataDir}/phone-token`, 'utf8')).trim(), token);
+});
+
+test('paired iPhone can browse visible folders inside the Mac home folder', async t => {
+  const homeDirectory = await mkdtemp('/tmp/raybridge-home-test-');
+  await mkdir(`${homeDirectory}/Alpha`);
+  await mkdir(`${homeDirectory}/beta`);
+  await mkdir(`${homeDirectory}/.hidden`);
+  await mkdir(`${homeDirectory}/Alpha/Nested`);
+  const bridge = await startBridge({ dataDir: `${homeDirectory}/.raybridge`, adminPort: 0, phonePort: 0,
+    codex: new FakeCodex(), homeDirectory });
+  t.after(async () => { await bridge.close(); await rm(homeDirectory, { recursive: true, force: true }); });
+  const token = (await readFile(`${homeDirectory}/.raybridge/phone-token`, 'utf8')).trim();
+  const base = `https://127.0.0.1:${bridge.phone.address().port}/v1/directories`;
+  assert.equal((await phoneJSON(base)).status, 401);
+  const root = await phoneJSON(base, token);
+  assert.equal(root.status, 200);
+  assert.equal(root.body.path, await realpath(homeDirectory));
+  assert.equal(root.body.parent, null);
+  assert.deepEqual(root.body.directories, ['Alpha', 'beta']);
+  const nestedURL = new URL(base);
+  nestedURL.searchParams.set('path', `${homeDirectory}/Alpha`);
+  const nested = await phoneJSON(nestedURL, token);
+  assert.equal(nested.status, 200);
+  assert.deepEqual(nested.body.directories, ['Nested']);
+  const outsideURL = new URL(base);
+  outsideURL.searchParams.set('path', '/tmp');
+  assert.equal((await phoneJSON(outsideURL, token)).status, 400);
 });
 
 test('local Codex login can be selected without exposing logout', async t => {

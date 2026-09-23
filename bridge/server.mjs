@@ -3,7 +3,7 @@ import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdir, readFile, writeFile, chmod } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile, chmod } from 'node:fs/promises';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes, timingSafeEqual, X509Certificate } from 'node:crypto';
@@ -90,7 +90,7 @@ export async function tailscaleName() {
 export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || path.join(os.homedir(), 'Library/Application Support/RayBridge'),
   adminPort = 8844, phonePort = 8845, codex: suppliedCodex, applicationProvider = installedApplications,
   claude: suppliedClaude, hermes: suppliedHermes, assistant: suppliedAssistant, tts: suppliedTTS,
-  tailnetProvider = tailscaleName } = {}) {
+  tailnetProvider = tailscaleName, homeDirectory = os.homedir() } = {}) {
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await chmod(dataDir, 0o700);
   const certPath = path.join(dataDir, 'server.crt');
@@ -116,6 +116,7 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
     if (accountSources.has(saved)) accountSource = saved;
   } catch {}
   const workspacePath = path.join(dataDir, 'codex-workspace');
+  const browseRoot = await resolveWorkspace(homeDirectory);
   let workspace = os.homedir();
   try { workspace = await resolveWorkspace((await readFile(workspacePath, 'utf8')).trim()); }
   catch { workspace = await resolveWorkspace(workspace); }
@@ -157,8 +158,25 @@ export async function startBridge({ dataDir = process.env.RAYBRIDGE_DATA_DIR || 
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(data));
   };
-  const phone = https.createServer({ key, cert, minVersion: 'TLSv1.2' }, (req, res) => {
-    sendJSON(res, authorized(req.headers.authorization, token) ? 404 : 401, { error: 'Use the paired iPhone app.' });
+  const phone = https.createServer({ key, cert, minVersion: 'TLSv1.2' }, async (req, res) => {
+    if (!authorized(req.headers.authorization, token))
+      return sendJSON(res, 401, { error: 'Pair this iPhone with RayBridge first.' });
+    try {
+      const requestURL = new URL(req.url || '/', 'https://raybridge.local');
+      if (req.method !== 'GET' || requestURL.pathname !== '/v1/directories')
+        return sendJSON(res, 404, { error: 'Use the paired iPhone app.' });
+      const requestedPaths = requestURL.searchParams.getAll('path');
+      if (requestedPaths.length > 1 || requestedPaths[0]?.length > 1024 ||
+          /[\u0000-\u001f\u007f]/.test(requestedPaths[0] || '')) throw new Error('Choose a valid folder.');
+      const target = requestedPaths[0] ? await resolveWorkspace(requestedPaths[0]) : browseRoot;
+      const relative = path.relative(browseRoot, target);
+      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+        throw new Error('Choose a folder inside your Mac home folder.');
+      const directories = (await readdir(target, { withFileTypes: true }))
+        .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
+        .map(entry => entry.name).sort((a, b) => a.localeCompare(b));
+      return sendJSON(res, 200, { path: target, parent: target === browseRoot ? null : path.dirname(target), directories });
+    } catch (error) { return sendJSON(res, 400, { error: error.message }); }
   });
   phone.on('upgrade', (req, socket, head) => {
     let connectionURL;
