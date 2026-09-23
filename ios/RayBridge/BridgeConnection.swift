@@ -21,6 +21,38 @@ final class CertificatePin: NSObject, URLSessionDelegate, @unchecked Sendable {
     }
 }
 
+struct DirectoryBrowseResult: Decodable {
+    let path: String
+    let parent: String?
+    let directories: [String]
+}
+
+extension Pairing {
+    func browseDirectories(path: String = "") async throws -> DirectoryBrowseResult {
+        var parts = URLComponents()
+        parts.scheme = "https"; parts.host = host; parts.port = port; parts.path = "/v1/directories"
+        if !path.isEmpty { parts.queryItems = [URLQueryItem(name: "path", value: path)] }
+        guard let url = parts.url else { throw BridgeError.message("Could not create the Mac folder request.") }
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 15
+        config.waitsForConnectivity = false
+        let session = URLSession(configuration: config,
+                                 delegate: CertificatePin(fingerprint: fingerprint), delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let message = (try? JSONDecoder().decode(BridgeServerError.self, from: data).error)
+                ?? "The Mac could not list that folder."
+            throw BridgeError.message(message)
+        }
+        return try JSONDecoder().decode(DirectoryBrowseResult.self, from: data)
+    }
+}
+
+private struct BridgeServerError: Decodable { let error: String }
+
 @MainActor
 final class BridgeConnection {
     var onMessage: (([String: Any]) -> Void)?
@@ -38,7 +70,7 @@ final class BridgeConnection {
         config.waitsForConnectivity = false
         let session = URLSession(configuration: config, delegate: CertificatePin(fingerprint: pairing.fingerprint), delegateQueue: nil)
         self.session = session
-        var request = URLRequest(url: pairing.url)
+        var request = URLRequest(url: pairing.connectionURL())
         request.setValue("Bearer \(pairing.token)", forHTTPHeaderField: "Authorization")
         request.setValue(assistant, forHTTPHeaderField: "X-RayBridge-Assistant")
         let socket = session.webSocketTask(with: request)

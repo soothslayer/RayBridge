@@ -95,6 +95,7 @@ struct ContentView: View {
 struct SetupView: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var directoryPairing: Pairing?
     var body: some View {
         NavigationStack {
             Form {
@@ -162,6 +163,20 @@ struct SetupView: View {
                     .disabled(model.sessionActive)
                     .accessibilityHint("Selects which signed-in assistant on your paired Mac answers your questions.")
                     Text("The assistants run through their command-line tools on your Mac. Configure each one there first, then you can switch here before starting RayBridge.")
+                    TextField("Optional Mac working folder", text: $model.workingFolder)
+                        .textContentType(.none).autocorrectionDisabled().textInputAutocapitalization(.never)
+                        .disabled(model.sessionActive || model.selectedPairingID.isEmpty)
+                        .accessibilityHint("Enter an absolute folder path on the selected Mac, or leave it blank to use the folder configured on that Mac.")
+                    Button {
+                        directoryPairing = model.pairedMacs.first { $0.id == model.selectedPairingID }
+                    } label: {
+                        Label("Browse Mac folders", systemImage: "folder")
+                    }
+                    .disabled(model.sessionActive || model.selectedPairingID.isEmpty)
+                    .accessibilityHint("Opens a list of folders inside the selected Mac’s home folder.")
+                    Button("Save working folder") { model.saveWorkingFolder() }
+                        .disabled(model.sessionActive || model.selectedPairingID.isEmpty)
+                    Text("Browse folders on the selected Mac, or enter an absolute path manually. This setting is saved separately for each paired Mac. Leave it blank to keep using that Mac’s current RayBridge working folder. Changing it starts a new assistant conversation the next time RayBridge connects.")
                 }
                 Section("Camera images") {
                     Toggle("Send camera image with every question", isOn: $model.alwaysSendCameraImage)
@@ -221,6 +236,12 @@ struct SetupView: View {
                 }
             }
             .onAppear { model.refreshSpeechVoices() }
+            .sheet(item: $directoryPairing) { pairing in
+                DirectoryPickerView(pairing: pairing) { path in
+                    model.workingFolder = path
+                    directoryPairing = nil
+                }
+            }
             .navigationTitle("Setup").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -235,5 +256,73 @@ struct SetupView: View {
         let version = info?["CFBundleShortVersionString"] as? String ?? "Unknown"
         let build = info?["CFBundleVersion"] as? String ?? "Unknown"
         return "RayBridge \(version) (\(build))"
+    }
+}
+
+struct DirectoryPickerView: View {
+    let pairing: Pairing
+    let onSelect: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            DirectoryBrowserScreen(pairing: pairing, path: "", onSelect: onSelect)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss() }
+                    }
+                }
+        }
+    }
+}
+
+struct DirectoryBrowserScreen: View {
+    let pairing: Pairing
+    let path: String
+    let onSelect: (String) -> Void
+    @State private var result: DirectoryBrowseResult?
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            if isLoading { ProgressView("Loading folders…") }
+            if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
+            if let result {
+                Section {
+                    Button { onSelect(result.path) } label: {
+                        Label("Use this folder", systemImage: "checkmark.circle")
+                    }
+                    .accessibilityHint("Selects \(result.path) as the working folder.")
+                }
+                if result.directories.isEmpty {
+                    Text("No subfolders").foregroundStyle(.secondary)
+                } else {
+                    Section("Folders") {
+                        ForEach(result.directories, id: \.self) { name in
+                            NavigationLink(name) {
+                                DirectoryBrowserScreen(pairing: pairing,
+                                                       path: childPath(base: result.path, name: name),
+                                                       onSelect: onSelect)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle(result.map { URL(fileURLWithPath: $0.path).lastPathComponent } ?? "Mac folders")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private func childPath(base: String, name: String) -> String {
+        URL(fileURLWithPath: base, isDirectory: true).appendingPathComponent(name).path
+    }
+
+    private func load() async {
+        isLoading = true; errorMessage = nil
+        do { result = try await pairing.browseDirectories(path: path) }
+        catch { errorMessage = error.localizedDescription }
+        isLoading = false
     }
 }

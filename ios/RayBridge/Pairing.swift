@@ -6,6 +6,7 @@ struct Pairing: Codable, Equatable, Identifiable {
     let port: Int
     let token: String
     let fingerprint: String
+    var workspace: String?
 
     var id: String { "\(host.lowercased()):\(port)" }
     var displayName: String { id }
@@ -26,8 +27,14 @@ struct Pairing: Codable, Equatable, Identifiable {
             throw BridgeError.message("Pair with a Mac on your private local network or tailnet.")
         }
         self.host = host; self.port = port; self.token = token; self.fingerprint = fingerprint
+        self.workspace = nil
     }
-    var url: URL { URL(string: "wss://\(host):\(port)/v1/connect")! }
+    func connectionURL() -> URL {
+        var parts = URLComponents()
+        parts.scheme = "wss"; parts.host = host; parts.port = port; parts.path = "/v1/connect"
+        if let workspace { parts.queryItems = [URLQueryItem(name: "workspace", value: workspace)] }
+        return parts.url!
+    }
 
     func save() throws {
         var history = Self.loadHistory()
@@ -49,6 +56,27 @@ struct Pairing: Codable, Equatable, Identifiable {
             throw BridgeError.message("That saved Mac is no longer available. Pair it again.")
         }
         try saveHistory(history)
+    }
+
+    static func setWorkspace(_ value: String, for id: String) throws -> String? {
+        let workspace = try normalizedWorkspace(value)
+        var history = loadHistory()
+        guard history.setWorkspace(workspace, for: id) else {
+            throw BridgeError.message("That saved Mac is no longer available. Pair it again.")
+        }
+        try saveHistory(history)
+        return workspace
+    }
+
+    static func normalizedWorkspace(_ value: String) throws -> String? {
+        let workspace = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if workspace.isEmpty { return nil }
+        guard workspace.utf8.count <= 1024,
+              !workspace.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+              workspace == "~" || workspace.hasPrefix("~/") || workspace.hasPrefix("/") else {
+            throw BridgeError.message("Enter an absolute Mac folder path, such as /Users/yourname/Documents, or leave it blank.")
+        }
+        return workspace
     }
 
     private static let service = "org.raybridge.pairing"
@@ -117,6 +145,10 @@ struct PairingHistory: Codable, Equatable {
     }
 
     mutating func remember(_ pairing: Pairing) {
+        var pairing = pairing
+        if pairing.workspace == nil {
+            pairing.workspace = recent.first(where: { $0.id == pairing.id })?.workspace
+        }
         recent.removeAll { $0.id == pairing.id }
         recent.insert(pairing, at: 0)
         recent = Array(recent.prefix(Self.limit))
@@ -129,6 +161,13 @@ struct PairingHistory: Codable, Equatable {
         let pairing = recent.remove(at: index)
         recent.insert(pairing, at: 0)
         selectedID = id
+        return true
+    }
+
+    @discardableResult
+    mutating func setWorkspace(_ workspace: String?, for id: String) -> Bool {
+        guard let index = recent.firstIndex(where: { $0.id == id }) else { return false }
+        recent[index].workspace = workspace
         return true
     }
 
